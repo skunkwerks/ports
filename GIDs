@@ -217,7 +217,7 @@ seaweedfs:*:273:
 # free: 274
 haclient:*:275:
 frontbase:*:276:
-# free: 277
+dkron:*:277:
 rtg:*:278:
 mrtg:*:279:
 xymon:*:280:
