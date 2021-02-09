@@ -2,8 +2,7 @@
 # $FreeBSD$
 
 PORTNAME=	dnsdist
-DISTVERSION=	1.5.1
-PORTREVISION=	2
+DISTVERSION=	1.6.0-alpha0
 CATEGORIES=	dns net
 MASTER_SITES=	https://downloads.powerdns.com/releases/
 
@@ -87,6 +86,9 @@ OPENSSL_CONFIGURE_WITH=	libssl
 
 SNMP_LIB_DEPENDS=	libnetsnmp.so:net-mgmt/net-snmp
 SNMP_CONFIGURE_WITH=	net-snmp
+
+post-extract:
+	${MV} ${WRKDIR}/dnsdist-* ${WRKSRC}
 
 post-install:
 	@${MKDIR} ${STAGEDIR}${ETCDIR}
