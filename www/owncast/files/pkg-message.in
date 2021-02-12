@@ -1,0 +1,13 @@
+[
+{ type: install
+  message: <<EOM
+The default owncast.yaml file should be self-explanatory, but further
+settings can be found at https://owncast.online/docs/configuration/
+
+A default %%PREFIX%%/etc/owncast.yaml will be installed for you, and
+the daemon can be enabled via:
+
+# sysrc owncast_enable=YES
+EOM
+}
+]

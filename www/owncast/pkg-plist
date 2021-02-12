@@ -1,0 +1,4 @@
+@comment %%WWWDIR%%/index.html
+@dir(%%USERS%%,%%GROUPS%%,750) /var/db/owncast
+@sample(%%USERS%%,%%GROUPS%%,640) %%ETCDIR%%/owncast.yaml.sample
+bin/owncast
