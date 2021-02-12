@@ -7,7 +7,7 @@ DISTVERSIONPREFIX=	v
 CATEGORIES=	net
 PKGNAMESUFFIX=	-devel
 
-MAINTAINER=	freebsd@geoffgarside.co.uk
+MAINTAINER=	dch@FreeBSD.org
 COMMENT=	RabbitMQ C AMQP client library
 
 LICENSE=	MIT
