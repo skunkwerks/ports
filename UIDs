@@ -812,7 +812,7 @@ ebusd:*:854:854::0:0:eBUS Daemon user:/nonexistent:/usr/sbin/nologin
 # free: 863
 # free: 864
 # free: 865
-# free: 866
+buildkite-agent:*:866:866::0:0:BuildKite Daemon:/var/db/buildkite-agent:/usr/sbin/nologin
 # free: 867
 # free: 868
 # free: 869
