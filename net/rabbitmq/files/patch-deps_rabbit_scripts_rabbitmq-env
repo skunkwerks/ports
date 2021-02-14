@@ -1,0 +1,11 @@
+--- deps/rabbit/scripts/rabbitmq-env.orig	2020-12-10 10:41:39 UTC
++++ deps/rabbit/scripts/rabbitmq-env
+@@ -183,7 +183,7 @@ run_escript()
+     # Important: do not quote RABBITMQ_CTL_ERL_ARGS as they must be
+     # word-split
+     # shellcheck disable=SC2086
+-    exec erl +B \
++    exec ${ERL_DIR}erl +B \
+         -boot "$CLEAN_BOOT_FILE" \
+         -noinput -noshell -hidden -smp enable \
+         $RABBITMQ_CTL_ERL_ARGS \
