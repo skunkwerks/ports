@@ -368,5 +368,6 @@
     SUBDIR += yorick
     SUBDIR += ypsilon
     SUBDIR += zig
+    SUBDIR += zig-devel
 
 .include <bsd.port.subdir.mk>
