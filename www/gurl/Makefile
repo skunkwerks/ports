@@ -1,4 +1,4 @@
-# $FreeBSD$
+# $FreeBSD: head/www/gurl/Makefile 566049 2021-02-19 11:48:04Z dch $
 
 PORTNAME=	gurl
 DISTVERSION=	0.2.2
