@@ -1,3 +1,5 @@
-TIMESTAMP = 1612267699
+TIMESTAMP = 1614951959
 SHA256 (freebsd-drm-kmod-5.4.92.g20210202-drm_v5.4.92_2_GH0.tar.gz) = 6ef7a6e317deda91a1022e649efd72a5c173dff9d7d82567c0b7cb7a5ad6d20e
 SIZE (freebsd-drm-kmod-5.4.92.g20210202-drm_v5.4.92_2_GH0.tar.gz) = 18825321
+SHA256 (5dfe923.patch) = 9cd7cba7a7178951538e02939f9b40f3e87f7f1b5f6f7add6cf6d7a069891c11
+SIZE (5dfe923.patch) = 14531
