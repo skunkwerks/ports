@@ -1,0 +1,17 @@
+Prince is a computer program that converts XML and HTML documents into
+PDF files by applying Cascading Style Sheets (CSS). It is a commercial
+product, which is free to download and use for non-commercial purposes.
+
+Prince supports all common web standards, including HTML, CSS and
+JavaScript, through its own code. That is, Prince is not based on a
+browser engine, but implements its own engine in the Mercury programming
+language.
+
+Prince can generate accessible PDFs conforming to the PDF/UA profile
+(ISO 14289, the International Standard for accessible PDF technology)
+that can be used by people with assistive technologies.
+
+Prince supports many languages, including Thai, Indic scripts (Hindi,
+Bengali, Tamil, etc.) and right-to-left scripts like Arabic and Hebrew.
+
+WWW: https://www.princexml.com/
