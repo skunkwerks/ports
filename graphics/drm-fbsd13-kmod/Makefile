@@ -3,7 +3,11 @@
 
 PORTNAME=	drm-fbsd13-kmod
 PORTVERSION=	5.4.92.g20210202
+PORTREVISION=	1
 CATEGORIES=	graphics kld
+
+PATCH_SITES=	https://github.com/freebsd/drm-kmod/commit/
+PATCHFILES+=	5dfe923.patch:-p1 # https://github.com/freebsd/drm-kmod/commit/5dfe923be9e6ed38cab5144673b6c51c20a80452
 
 MAINTAINER=	x11@FreeBSD.org
 COMMENT=	DRM modules for the linuxkpi-based KMS components
