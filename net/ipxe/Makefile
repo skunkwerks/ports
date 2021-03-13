@@ -2,7 +2,7 @@
 # $FreeBSD$
 
 PORTNAME=	ipxe
-DISTVERSION=	g20201129
+DISTVERSION=	g20210303
 PORTEPOCH=	1
 CATEGORIES=	net
 
@@ -11,14 +11,14 @@ COMMENT=	Open source network boot firmware
 
 LICENSE=	GPLv2
 
-ONLY_FOR_ARCHS=	amd64 i386
+ONLY_FOR_ARCHS=	amd64 i386 aarch64
 ONLY_FOR_ARCHS_REASON=	not yet ported to anything other than amd64/i386
 
 USES=		gmake perl5 shebangfix
 USE_BINUTILS=	yes
 USE_GCC=	yes:build
 USE_GITHUB=	yes
-GH_TAGNAME=	13a6d17
+GH_TAGNAME=	65bd5c0
 USE_PERL5=	build
 SHEBANG_FILES=	util/geniso util/gensdsk
 MAKE_ARGS=	AR=${AR} \
