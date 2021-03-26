@@ -1,0 +1,5 @@
+@dir(dkron,dkron,770) %%ETCDIR%%
+@dir(dkron,dkron,770) /var/db/dkron
+@dir(dkron,dkron,770) /var/log/dkron
+@comment @sample(dkron,dkron,640) %%ETCDIR%%/dkron.yml.sample
+bin/dkron
