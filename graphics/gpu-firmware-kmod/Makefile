@@ -1,5 +1,5 @@
 # Created by: Johannes Dieterich <jmd@FreeBSD.org>
-# $FreeBSD$
+# $FreeBSD: head/graphics/gpu-firmware-kmod/Makefile 568772 2021-03-19 05:21:12Z jkim $
 
 PORTNAME=	gpu-firmware-kmod
 PORTVERSION=	g20210224
@@ -20,8 +20,8 @@ LICENSE_PERMS_INTEL=	dist-mirror no-dist-sell pkg-mirror no-pkg-sell auto-accept
 USES=		kmod uidfix
 
 USE_GITHUB=	yes
-GH_ACCOUNT=	FreeBSDDesktop
-GH_PROJECT=	kms-firmware
+GH_ACCOUNT=	freebsd
+GH_PROJECT=	drm-kmod-firmware
 GH_TAGNAME=	d15ea6e
 
 .include <bsd.port.mk>
