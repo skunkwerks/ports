@@ -1,9 +1,13 @@
 # $FreeBSD$
 
 PORTNAME=	nng
+PORTREVISION=	1
 DISTVERSIONPREFIX=	v
 DISTVERSION=	1.4.0
 CATEGORIES=	net
+
+PATCH_SITES=	https://github.com/${GH_ACCOUNT}/${GH_PROJECT}/pull/
+PATCHFILES+=	1423.patch:-p1 # https://github.com/bartekrutkowski/iocell/pull/37
 
 MAINTAINER=	swills@FreeBSD.org
 COMMENT=	Lightweight, broker-less messaging
