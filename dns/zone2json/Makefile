@@ -1,7 +1,7 @@
 # $FreeBSD$
 
 PORTNAME=	zone2json
-DISTVERSION=	0.0.2
+DISTVERSION=	0.0.3
 CATEGORIES=	dns
 
 MAINTAINER=	dch@FreeBSD.org
@@ -11,7 +11,7 @@ LICENSE=	BSD2CLAUSE
 LICENSE_FILE=	${WRKSRC}/LICENSE
 
 BUILD_DEPENDS=	${LOCALBASE}/lib/libldns.a:dns/ldns \
-		${LOCALBASE}/lib/librabbitmq.a:net/rabbitmq-c-devel \
+		${LOCALBASE}/lib/librabbitmq.a:net/rabbitmq-c \
 		${LOCALBASE}/bin/zig:lang/zig-devel
 
 USES=		ssl

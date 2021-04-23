@@ -2,6 +2,7 @@
 
 PORTNAME=	pmacct
 DISTVERSION=	1.7.5
+PORTREVISION=	1
 CATEGORIES=	net-mgmt
 MASTER_SITES=	http://www.pmacct.net/
 
@@ -48,7 +49,7 @@ LAYER2_CONFIGURE_ENABLE=	l2
 PLABEL_CONFIGURE_ENABLE=	plabel
 DEBUG_CONFIGURE_ENABLE=		debug
 
-RABBITMQ_VARS=			LIB_DEPENDS+=librabbitmq.so:net/rabbitmq-c-devel
+RABBITMQ_VARS=			LIB_DEPENDS+=librabbitmq.so:net/rabbitmq-c
 RABBITMQ_CONFIGURE_ENABLE=	rabbitmq
 
 REDIS_VARS=			LIB_DEPENDS+=libhiredis.so:databases/hiredis
