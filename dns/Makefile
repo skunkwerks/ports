@@ -237,6 +237,7 @@
     SUBDIR += wrapsrv
     SUBDIR += yadifa
     SUBDIR += zkt
+    SUBDIR += zone2json
     SUBDIR += zonenotify
 
 .include <bsd.port.subdir.mk>
