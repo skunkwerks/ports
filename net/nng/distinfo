@@ -1,3 +1,5 @@
-TIMESTAMP = 1613245751
+TIMESTAMP = 1614522092
 SHA256 (nanomsg-nng-v1.4.0_GH0.tar.gz) = e0af76aff291c670d091a07a4e71febf7b7a254f1ab5939f9464ccbd8f8aa2ba
 SIZE (nanomsg-nng-v1.4.0_GH0.tar.gz) = 710306
+SHA256 (1423.patch) = cfb6fd36d7e10989a015d1cab2bf7327c4dea6bfe6d3ed1dab36e6303b7f4f74
+SIZE (1423.patch) = 5215
