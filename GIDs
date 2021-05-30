@@ -779,7 +779,7 @@ beehive:*:832:
 # free: 836
 # free: 837
 # free: 838
-# free: 839
+dkron:*:839:
 netdisco:*:840:
 tcpcryptd:*:841:
 munin:*:842:

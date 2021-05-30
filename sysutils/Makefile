@@ -273,6 +273,7 @@
     SUBDIR += diskonaut
     SUBDIR += diskscrub
     SUBDIR += disktype
+    SUBDIR += dkron
     SUBDIR += dmg2img
     SUBDIR += dmidecode
     SUBDIR += dnf

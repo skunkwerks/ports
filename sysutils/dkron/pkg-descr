@@ -1,0 +1,16 @@
+Dkron is a system service for workload automation that runs scheduled
+jobs, just like the cron unix service but distributed in several
+machines in a cluster. It has no single point of failure, a
+comprehensive API, and an easy to use dashboard.
+
+By default it requires 3 ports:
+
+- 8946 for serf layer between agents
+- 8080 for HTTP for the API and Dashboard
+- 6868 for gRPC and raft layer comunication between agents.
+
+You can give dkron a test run on a single node with:
+
+    dkron agent --server --bootstrap-expect=1
+
+WWW: https://dkron.io/
