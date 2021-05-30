@@ -163,6 +163,8 @@
     SUBDIR += pkfonts600
     SUBDIR += pnm2ppa
     SUBDIR += posterazor
+    SUBDIR += prince
+    SUBDIR += prince12
     SUBDIR += print-manager
     SUBDIR += ps2eps
     SUBDIR += pscal
