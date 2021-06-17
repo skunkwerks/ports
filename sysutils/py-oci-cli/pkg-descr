@@ -1,0 +1,17 @@
+Oracle Cloud Infrastructure CLI python-based automation tool.
+
+The project is open source and maintained by Oracle Corp. The home page for the
+project is here.
+
+To get help with the command line:
+
+oci --help
+
+or
+
+oci -h
+
+Detailed documentation for CLI prerequisites, installation and configuration,
+and troubleshooting can be found here.
+
+WWW: https://docs.cloud.oracle.com/iaas/Content/API/Concepts/cliconcepts.htm

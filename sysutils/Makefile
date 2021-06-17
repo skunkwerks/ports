@@ -1049,6 +1049,7 @@
     SUBDIR += py-mitogen
     SUBDIR += py-mqttwarn
     SUBDIR += py-nagiosplugin
+    SUBDIR += py-oci-cli
     SUBDIR += py-packet-python
     SUBDIR += py-pkginfo
     SUBDIR += py-ploy
