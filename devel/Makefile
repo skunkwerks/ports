@@ -837,6 +837,7 @@
     SUBDIR += gitblit
     SUBDIR += gitflow
     SUBDIR += gitg
+    SUBDIR += github-act-runner
     SUBDIR += github-backup-utils
     SUBDIR += gitinspector
     SUBDIR += gitlab-runner
