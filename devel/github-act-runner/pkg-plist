@@ -1,0 +1,3 @@
+bin/github-act-runner
+@dir %%ETCDIR%%/hooks
+@dir %%ETCDIR%%/plugins

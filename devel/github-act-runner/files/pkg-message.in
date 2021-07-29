@@ -1,0 +1,16 @@
+[
+{ type: install
+  message: <<EOM
+
+** WARNING **
+
+Allowing self-hosted runners on public repositories, and especially allowing
+workflows on public forks, introduces a significant security risk. Anyone
+who creates a fork of a repository can run arbitrary workflows on your
+self-hosted runners through pull requests. Before proceeding, be sure to
+read about Self-hosted runner security:
+
+https://docs.github.com/actions/hosting-your-own-runners/about-self-hosted-runners#self-hosted-runner-security-with-public-repositories
+EOM
+}
+]
