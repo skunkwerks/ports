@@ -47,6 +47,7 @@
     SUBDIR += avahi-libdns
     SUBDIR += avahi-qt5
     SUBDIR += avahi-sharp
+    SUBDIR += avalanchemq
     SUBDIR += axa
     SUBDIR += babeld
     SUBDIR += balance

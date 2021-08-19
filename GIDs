@@ -242,7 +242,7 @@ owncast:*:299:
 backuppc:*:300:
 # free: 301
 netdata:*:302:
-# free: 303
+avalanchemq:*:303:
 # free: 304
 # free: 305
 # free: 306

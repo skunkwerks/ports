@@ -1,0 +1,7 @@
+@dir(avalanchemq,avalanchemq,750) %%ETCDIR%%
+@dir(avalanchemq,avalanchemq,750) /var/db/avalanchemq
+@dir(avalanchemq,avalanchemq,750) /var/log/avalanchemq
+@comment TBH is there a default to use yet? @sample %%ETCDIR%%/avalanchemq.conf.sample
+bin/avalanchemq
+bin/avalanchemqctl
+bin/avalanchemqperf
