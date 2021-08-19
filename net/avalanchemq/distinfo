@@ -1,0 +1,7 @@
+TIMESTAMP = 1629986222
+SHA256 (cloudamqp-avalanchemq-v1.0.0-alpha.31_GH0.tar.gz) = c4264e6dff3b3b65e17604a3dea21e2614a8167495c8167a431f59bef9218ec0
+SIZE (cloudamqp-avalanchemq-v1.0.0-alpha.31_GH0.tar.gz) = 871165
+SHA256 (dch-avalanchemq-lib-1.0.0-alpha.31_GH0.tar.gz) = 15fd65ae3b6ae8a36605e70f34c67ca6a3f0ee94fdbedaba4c4b3d06c71292a6
+SIZE (dch-avalanchemq-lib-1.0.0-alpha.31_GH0.tar.gz) = 121562
+SHA256 (3a73c414b749.patch) = fdb42f84d132bc864c969e9a5008f51fa5a0ef80f1b5285511ae105f635be32e
+SIZE (3a73c414b749.patch) = 1870

@@ -1,0 +1,7 @@
+@dir(avalanchemq,avalanchemq,750) %%ETCDIR%%
+@dir(avalanchemq,avalanchemq,750) /var/db/avalanchemq
+@dir(avalanchemq,avalanchemq,750) /var/log/avalanchemq
+@sample %%ETCDIR%%/config.ini.sample
+bin/avalanchemq
+bin/avalanchemqctl
+bin/avalanchemqperf

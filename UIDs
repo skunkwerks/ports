@@ -247,7 +247,7 @@ owncast:*:299:299::0:0:& daemon:/nonexistent:/usr/sbin/nologin
 backuppc:*:300:300::0:0:BackupPC pseudo-user:/nonexistent:/usr/sbin/nologin
 # free: 301
 netdata:*:302:302::0:0:NetData Daemon:/var/cache/netdata:/usr/sbin/nologin
-# free: 303
+avalanchemq:*:303:303::0:0:AvalancheMQ user:/nonexistent:/usr/sbin/nologin
 # free: 304
 # free: 305
 # free: 306

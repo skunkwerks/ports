@@ -1,0 +1,94 @@
+#!/bin/sh
+
+# PROVIDE: avalanchemq
+# REQUIRE: DAEMON
+# KEYWORD: shutdown
+#
+# Add the following lines to /etc/rc.conf.local or /etc/rc.conf
+# to enable this service:
+#
+# avalanchemq_enable (bool):	Set it to YES to enable avalanchemq.
+#			Default is "NO".
+# avalanchemq_user (user):	Set user to run avalanchemq.
+#			Default is "avalanchemq".
+# avalanchemq_group (group):	Set group to run avalanchemq.
+#			Default is "avalanchemq".
+# avalanchemq_config (file):	Set avalanchemq config file.
+#			Default is "%%ETCDIR%%/avalanchemq.conf".
+# avalanchemq_syslog_output_enable (bool):	Set to enable syslog output.
+#					Default is "NO". See daemon(8).
+# avalanchemq_syslog_output_priority (str):	Set syslog priority if syslog enabled.
+#					Default is "info". See daemon(8).
+# avalanchemq_syslog_output_facility (str):	Set syslog facility if syslog enabled.
+#					Default is "daemon". See daemon(8).
+
+. /etc/rc.subr
+
+name=avalanchemq
+rcvar=avalanchemq_enable
+
+load_rc_config $name
+
+: ${avalanchemq_enable:="NO"}
+: ${avalanchemq_dir:="/var/db/avalanchemq"}
+: ${avalanchemq_run:="/var/run/avalanchemq"}
+: ${avalanchemq_user:="avalanchemq"}
+: ${avalanchemq_group:="avalanchemq"}
+: ${avalanchemq_config:="%%ETCDIR%%/config.ini"}
+
+DAEMON=$(/usr/sbin/daemon 2>&1 | grep -q syslog ; echo $?)
+if [ ${DAEMON} -eq 0 ]; then
+        : ${avalanchemq_syslog_output_enable:="NO"}
+        : ${avalanchemq_syslog_output_priority:="info"}
+        : ${avalanchemq_syslog_output_facility:="daemon"}
+        if checkyesno avalanchemq_syslog_output_enable; then
+                avalanchemq_syslog_output_flags="-T ${name}"
+
+                if [ -n "${avalanchemq_syslog_output_priority}" ]; then
+                        avalanchemq_syslog_output_flags="${avalanchemq_syslog_output_flags} -s ${avalanchemq_syslog_output_priority}"
+                fi
+
+                if [ -n "${avalanchemq_syslog_output_facility}" ]; then
+                        avalanchemq_syslog_output_flags="${avalanchemq_syslog_output_flags} -l ${avalanchemq_syslog_output_facility}"
+                fi
+        fi
+else
+        avalanchemq_syslog_output_enable="NO"
+        avalanchemq_syslog_output_flags=""
+fi
+
+pidfile=/var/run/avalanchemq/daemon.pid
+procname="%%PREFIX%%/bin/avalanchemq"
+command="/usr/sbin/daemon"
+command_args="-f -t ${name} ${avalanchemq_syslog_output_flags} -p ${pidfile} /usr/bin/env ${avalanchemq_env} ${procname} --config=${avalanchemq_config}"
+
+extra_commands="reload monitor"
+monitor_cmd=avalanchemq_monitor
+start_precmd=avalanchemq_startprecmd
+required_files="$avalanchemq_config"
+
+avalanchemq_monitor()
+{
+	sig_reload=USR1
+	run_rc_command "reload"
+}
+
+avalanchemq_startprecmd()
+{
+        if [ ! -d ${avalanchemq_run} ]; then
+                install -d -o ${avalanchemq_user} -g ${avalanchemq_group} ${avalanchemq_run}
+        fi
+
+        if [ ! -d ${avalanchemq_dir} ]; then
+                install -d -o ${avalanchemq_user} -g ${avalanchemq_group} ${avalanchemq_dir}
+        fi
+
+        if [ ! -e ${pidfile} ]; then
+                install -o ${avalanchemq_user} -g ${avalanchemq_group} /dev/null ${pidfile};
+        fi
+
+        # remove stray sockets that can block startup
+        rm -rf ${avalanchemq_run}/*.sock /tmp/avalanchemq
+}
+
+run_rc_command "$1"
