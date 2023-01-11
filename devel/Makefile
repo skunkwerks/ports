@@ -826,6 +826,7 @@
     SUBDIR += gitaly
     SUBDIR += gitflow
     SUBDIR += gitg
+    SUBDIR += github-act-runner
     SUBDIR += github-backup-utils
     SUBDIR += gitinspector
     SUBDIR += gitklient
