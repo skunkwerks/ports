@@ -1,0 +1,4 @@
+Tailwind UI is a utility-first CSS framework for rapidly building custom user
+interfaces. This package provides the command-line tool that automatically
+generates, compiles, and optimises your CSS for development and production.
+
