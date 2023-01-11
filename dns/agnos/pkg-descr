@@ -1,0 +1,2 @@
+Obtain (wildcard) certificates from let's encrypt using dns-01 without
+the need for API access to your DNS provider.

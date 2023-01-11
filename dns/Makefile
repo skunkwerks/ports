@@ -3,6 +3,7 @@
     SUBDIR += acme-dns
     SUBDIR += adns
     SUBDIR += adsuck
+    SUBDIR += agnos
     SUBDIR += amass
     SUBDIR += ares
     SUBDIR += axfr2acl
