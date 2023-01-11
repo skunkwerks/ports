@@ -1,45 +1,77 @@
 GH_TUPLE=	\
-		DataDog:datadog-go:v3.7.2:datadog_datadog_go/vendor/github.com/DataDog/datadog-go \
-		DataDog:dd-trace-go:v1.28.0:datadog_dd_trace_go/vendor/gopkg.in/DataDog/dd-trace-go.v1 \
-		aws:aws-sdk-go:v1.43.18:aws_aws_sdk_go/vendor/github.com/aws/aws-sdk-go \
-		buildkite:bintest:v3.1.0:buildkite_bintest_v3/vendor/github.com/buildkite/bintest/v3 \
+		DataDog:datadog-agent:6491aa3bf583:datadog_datadog_agent_obfuscate/vendor/github.com/DataDog/datadog-agent \
+		DataDog:datadog-go:v4.8.2:datadog_datadog_go/vendor/github.com/DataDog/datadog-go \
+		DataDog:datadog-go:v5.1.1:datadog_datadog_go_v5/vendor/github.com/DataDog/datadog-go/v5 \
+		DataDog:dd-trace-go:v1.43.1:datadog_dd_trace_go/vendor/gopkg.in/DataDog/dd-trace-go.v1 \
+		DataDog:sketches-go:v1.2.1:datadog_sketches_go/vendor/github.com/DataDog/sketches-go \
+		Microsoft:go-winio:v0.5.1:microsoft_go_winio/vendor/github.com/Microsoft/go-winio \
+		aws:aws-sdk-go:v1.44.66:aws_aws_sdk_go/vendor/github.com/aws/aws-sdk-go \
+		buildkite:bintest:v3.1.1:buildkite_bintest_v3/vendor/github.com/buildkite/bintest/v3 \
 		buildkite:interpolate:07f35b4ae251:buildkite_interpolate/vendor/github.com/buildkite/interpolate \
+		buildkite:roko:v1.0.1:buildkite_roko/vendor/github.com/buildkite/roko \
 		buildkite:shellwords:c3f497d1e000:buildkite_shellwords/vendor/github.com/buildkite/shellwords \
 		buildkite:yaml:4a3f40911396:buildkite_yaml/vendor/github.com/buildkite/yaml \
+		cenkalti:backoff:v4.1.3:cenkalti_backoff_v4/vendor/github.com/cenkalti/backoff/v4 \
+		census-instrumentation:opencensus-go:v0.23.0:census_instrumentation_opencensus_go/vendor/go.opencensus.io \
+		cespare:xxhash:v2.1.2:cespare_xxhash_v2/vendor/github.com/cespare/xxhash/v2 \
 		cpuguy83:go-md2man:f79a8a8ca69d:cpuguy83_go_md2man_v2/vendor/github.com/cpuguy83/go-md2man/v2 \
-		creack:pty:v1.1.12:creack_pty/vendor/github.com/creack/pty \
+		creack:pty:v1.1.18:creack_pty/vendor/github.com/creack/pty \
 		davecgh:go-spew:v1.1.1:davecgh_go_spew/vendor/github.com/davecgh/go-spew \
-		denisbrodbeck:machineid:v1.0.0:denisbrodbeck_machineid/vendor/github.com/denisbrodbeck/machineid \
-		go-check:check:788fd7840127:go_check_check/vendor/gopkg.in/check.v1 \
-		go-yaml:yaml:9f266ea9e77c:go_yaml_yaml/vendor/gopkg.in/yaml.v3 \
-		golang:appengine:v1.2.0:golang_appengine/vendor/google.golang.org/appengine \
-		golang:crypto:78000ba7a073:golang_crypto/vendor/golang.org/x/crypto \
-		golang:net:cd36cc0744dd:golang_net/vendor/golang.org/x/net \
-		golang:oauth2:c57b0facaced:golang_oauth2/vendor/golang.org/x/oauth2 \
-		golang:protobuf:v1.2.0:golang_protobuf/vendor/github.com/golang/protobuf \
-		golang:sys:1d35b9e2eb4e:golang_sys/vendor/golang.org/x/sys \
+		denisbrodbeck:machineid:v1.0.1:denisbrodbeck_machineid/vendor/github.com/denisbrodbeck/machineid \
+		dgraph-io:ristretto:v0.1.0:dgraph_io_ristretto/vendor/github.com/dgraph-io/ristretto \
+		dustin:go-humanize:v1.0.0:dustin_go_humanize/vendor/github.com/dustin/go-humanize \
+		go-logr:logr:v1.2.3:go_logr_logr/vendor/github.com/go-logr/logr \
+		go-logr:stdr:v1.2.2:go_logr_stdr/vendor/github.com/go-logr/stdr \
+		go-yaml:yaml:v3.0.1:go_yaml_yaml/vendor/gopkg.in/yaml.v3 \
+		go4org:unsafe-assume-no-moving-gc:928513b29760:go4org_go4_1/vendor/go4.org/unsafe/assume-no-moving-gc \
+		gofrs:flock:v0.8.1:gofrs_flock/vendor/github.com/gofrs/flock \
+		golang:appengine:v1.6.7:golang_appengine/vendor/google.golang.org/appengine \
+		golang:crypto:86341886e292:golang_crypto/vendor/golang.org/x/crypto \
+		golang:exp:39d4317da171:golang_exp/vendor/golang.org/x/exp \
+		golang:glog:v1.0.0:golang_glog/vendor/github.com/golang/glog \
+		golang:groupcache:8c9f03a8e57e:golang_groupcache/vendor/github.com/golang/groupcache \
+		golang:net:a158d28d115b:golang_net/vendor/golang.org/x/net \
+		golang:oauth2:fd043fe589d2:golang_oauth2/vendor/golang.org/x/oauth2 \
+		golang:protobuf:v1.5.2:golang_protobuf/vendor/github.com/golang/protobuf \
+		golang:sys:fb04ddd9f9c8:golang_sys/vendor/golang.org/x/sys \
+		golang:term:03fcf44c2211:golang_term/vendor/golang.org/x/term \
 		golang:text:v0.3.7:golang_text/vendor/golang.org/x/text \
-		golang:time:3af7569d3a1e:golang_time/vendor/golang.org/x/time \
-		golang:tools:23463209683d:golang_tools/vendor/golang.org/x/tools \
-		golang:xerrors:a985d3407aa7:golang_xerrors/vendor/golang.org/x/xerrors \
+		golang:time:f0f3c7e86c11:golang_time/vendor/golang.org/x/time \
+		golang:tools:v0.1.12:golang_tools/vendor/golang.org/x/tools \
+		golang:xerrors:65e65417b02f:golang_xerrors/vendor/golang.org/x/xerrors \
+		google:go-cmp:v0.5.9:google_go_cmp/vendor/github.com/google/go-cmp \
+		google:go-genproto:4e6b2dfa6612:google_go_genproto/vendor/google.golang.org/genproto \
 		google:go-querystring:53e6ce116135:google_go_querystring/vendor/github.com/google/go-querystring \
-		google:uuid:v1.1.2:google_uuid/vendor/github.com/google/uuid \
-		googleapis:gax-go:da06d194a00e:googleapis_gax_go/vendor/github.com/googleapis/gax-go \
-		googleapis:google-api-go-client:cc9bd73d51b4:googleapis_google_api_go_client/vendor/google.golang.org/api \
-		googleapis:google-cloud-go:65216237311a:googleapis_google_cloud_go/vendor/cloud.google.com/go \
-		grpc:grpc-go:d0c32ee6a441:grpc_grpc_go/vendor/google.golang.org/grpc \
+		google:uuid:v1.3.0:google_uuid/vendor/github.com/google/uuid \
+		googleapis:enterprise-certificate-proxy:v0.1.0:googleapis_enterprise_certificate_proxy/vendor/github.com/googleapis/enterprise-certificate-proxy \
+		googleapis:gax-go:v2.4.0:googleapis_gax_go_v2/vendor/github.com/googleapis/gax-go \
+		googleapis:google-api-go-client:v0.91.0:googleapis_google_api_go_client/vendor/google.golang.org/api \
+		googleapis:google-cloud-go:compute/v1.9.0:googleapis_google_cloud_go_compute/vendor/cloud.google.com/go \
+		grpc-ecosystem:grpc-gateway:v2.7.0:grpc_ecosystem_grpc_gateway_v2/vendor/github.com/grpc-ecosystem/grpc-gateway/v2 \
+		grpc:grpc-go:v1.48.0:grpc_grpc_go/vendor/google.golang.org/grpc \
+		inetaf:netaddr:097006376321:inetaf_netaddr/vendor/inet.af/netaddr \
 		jmespath:go-jmespath:v0.4.0:jmespath_go_jmespath/vendor/github.com/jmespath/go-jmespath \
-		kr:pretty:v0.1.0:kr_pretty/vendor/github.com/kr/pretty \
+		josharian:intern:v1.0.0:josharian_intern/vendor/github.com/josharian/intern \
+		mailru:easyjson:v0.7.7:mailru_easyjson/vendor/github.com/mailru/easyjson \
 		mattn:go-zglob:2ea3427bfa53:mattn_go_zglob/vendor/github.com/mattn/go-zglob \
 		mitchellh:go-homedir:v1.1.0:mitchellh_go_homedir/vendor/github.com/mitchellh/go-homedir \
 		nightlyone:lockfile:0ad87eef1443:nightlyone_lockfile/vendor/github.com/nightlyone/lockfile \
 		oleiade:reflections:0e86b3c98b2f:oleiade_reflections/vendor/github.com/oleiade/reflections \
+		open-telemetry:opentelemetry-go-contrib:v1.11.1:open_telemetry_opentelemetry_go_contrib/vendor/go.opentelemetry.io/contrib/propagators/aws \
+		open-telemetry:opentelemetry-go-contrib:v1.11.1:open_telemetry_opentelemetry_go_contrib_1/vendor/go.opentelemetry.io/contrib/propagators/b3 \
+		open-telemetry:opentelemetry-go-contrib:v1.11.1:open_telemetry_opentelemetry_go_contrib_2/vendor/go.opentelemetry.io/contrib/propagators/jaeger \
+		open-telemetry:opentelemetry-go-contrib:v1.8.0:open_telemetry_opentelemetry_go_contrib_3/vendor/go.opentelemetry.io/contrib/propagators/ot \
+		open-telemetry:opentelemetry-go:v1.11.1:open_telemetry_opentelemetry_go/vendor/go.opentelemetry.io/otel \
+		open-telemetry:opentelemetry-go:v1.8.0:open_telemetry_opentelemetry_go_1/vendor/go.opentelemetry.io/otel/exporters/otlp/internal/retry \
+		open-telemetry:opentelemetry-go:v1.8.0:open_telemetry_opentelemetry_go_2/vendor/go.opentelemetry.io/otel/exporters/otlp/otlptrace \
+		open-telemetry:opentelemetry-proto-go:v0.18.0:open_telemetry_opentelemetry_proto_go/vendor/go.opentelemetry.io/proto/otlp \
 		opentracing:opentracing-go:v1.2.0:opentracing_opentracing_go/vendor/github.com/opentracing/opentracing-go \
 		pborman:uuid:1b00554d8222:pborman_uuid/vendor/github.com/pborman/uuid \
 		petermattis:goid:b0b1615b78e5:petermattis_goid/vendor/github.com/petermattis/goid \
-		philhofer:fwd:v1.0.0:philhofer_fwd/vendor/github.com/philhofer/fwd \
+		philhofer:fwd:v1.1.1:philhofer_fwd/vendor/github.com/philhofer/fwd \
 		pkg:errors:v0.9.1:pkg_errors/vendor/github.com/pkg/errors \
 		pmezard:go-difflib:v1.0.0:pmezard_go_difflib/vendor/github.com/pmezard/go-difflib \
+		protocolbuffers:protobuf-go:v1.28.1:protocolbuffers_protobuf_go/vendor/google.golang.org/protobuf \
 		qri-io:jsonpointer:168dd9e45cf2:qri_io_jsonpointer/vendor/github.com/qri-io/jsonpointer \
 		qri-io:jsonschema:d0d3b10ec792:qri_io_jsonschema/vendor/github.com/qri-io/jsonschema \
 		rjeczalik:interfaces:v0.1.1:rjeczalik_interfaces/vendor/github.com/rjeczalik/interfaces \
@@ -47,6 +79,8 @@ GH_TUPLE=	\
 		sasha-s:go-deadlock:237a9547c8a5:sasha_s_go_deadlock/vendor/github.com/sasha-s/go-deadlock \
 		sergi:go-diff:v1.0.0:sergi_go_diff/vendor/github.com/sergi/go-diff \
 		shurcooL:sanitized_anchor_name:v1.0.0:shurcool_sanitized_anchor_name/vendor/github.com/shurcooL/sanitized_anchor_name \
-		stretchr:testify:v1.7.1:stretchr_testify/vendor/github.com/stretchr/testify \
+		stretchr:testify:v1.8.1:stretchr_testify/vendor/github.com/stretchr/testify \
 		tinylib:msgp:v1.1.2:tinylib_msgp/vendor/github.com/tinylib/msgp \
-		urfave:cli:v1.22.4:urfave_cli/vendor/github.com/urfave/cli
+		uber-go:atomic:v1.7.0:uber_go_atomic/vendor/go.uber.org/atomic \
+		uber-go:multierr:v1.8.0:uber_go_multierr/vendor/go.uber.org/multierr \
+		urfave:cli:v1.22.10:urfave_cli/vendor/github.com/urfave/cli
