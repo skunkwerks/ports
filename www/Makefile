@@ -2229,6 +2229,7 @@
     SUBDIR += sogo2
     SUBDIR += sogo2-activesync
     SUBDIR += spawn-fcgi
+    SUBDIR += spoa-mirror
     SUBDIR += spreadlogd
     SUBDIR += sqstat
     SUBDIR += squid
