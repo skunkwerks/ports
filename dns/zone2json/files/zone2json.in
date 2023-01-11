@@ -1,0 +1,43 @@
+#!/bin/sh
+
+# PROVIDE: zone2json
+# REQUIRE: DAEMON
+# KEYWORD: shutdown
+#
+# Add the following lines to /etc/rc.conf.local or /etc/rc.conf
+# to enable this service:
+#
+# zone2json_config	(string):	Set queue and AMQP URI
+#			Default is "NO".
+# zone2json_enable	(bool):	Set it to YES to enable zone2json.
+#			Default is "NO".
+# zone2json_user	(user):	Set user to run zone2json.
+#			Default is "unbound".
+# zone2json_group	(group):	Set group to run zone2json.
+#			Default is "unbound".
+
+. /etc/rc.subr
+
+name=zone2json
+rcvar=zone2json_enable
+
+load_rc_config $name
+
+: ${zone2json_enable:="NO"}
+: ${zone2json_user:="unbound"}
+: ${zone2json_group:="unbound"}
+: ${zone2json_config:="--queue some.where amqps://user:passwd@host:port/vhost"}
+
+pidfile=/var/run/zone2json.pid
+procname="%%PREFIX%%/bin/zone2json-server"
+command="/usr/sbin/daemon"
+command_args="-f -c -r -T ${name} -t ${name} -p ${pidfile} ${procname} ${zone2json_config}"
+start_precmd=zone2json_startprecmd
+zone2json_startprecmd()
+{
+        if [ ! -e ${pidfile} ]; then
+                install -o ${zone2json_user} -g ${zone2json_group} /dev/null ${pidfile}
+        fi
+}
+
+run_rc_command "$1"

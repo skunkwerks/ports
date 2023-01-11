@@ -250,6 +250,7 @@
     SUBDIR += yadifa
     SUBDIR += yandex-ddns
     SUBDIR += zkt
+    SUBDIR += zone2json
     SUBDIR += zonenotify
 
 .include <bsd.port.subdir.mk>

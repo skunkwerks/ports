@@ -1,0 +1,11 @@
+zone2json receives standard RFC1035-style zonefiles and generates JSON
+format equivalents. This is available as either a standard command-line
+utility, or an AMQP-based RPC daemon.
+
+$ dig +tcp @xfr01.nsone.net zone.com axfr \
+  | zone2json | jq .
+
+$ export AMQP_URI='amqps://user:password@host/vhost?heartbeat=43'
+$ zone2json-server --queue rpc.zdns $AMQP_URI
+
+WWW: https://github.com/skunkwerks/zone2json
