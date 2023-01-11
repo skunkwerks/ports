@@ -1,0 +1,7 @@
+TIMESTAMP = 1672840989
+SHA256 (hedgedoc-1.9.6.tar.gz) = dfd0fca006f9075f072df058476ea542adb32b63964afb2985211e1114ab333e
+SIZE (hedgedoc-1.9.6.tar.gz) = 61081612
+SHA256 (hedgedoc-1.9.6-yarn-cache.txz) = 9f8f8f1b0fe579a705301eee8331599320ab759a67331e6b509ae43083260f63
+SIZE (hedgedoc-1.9.6-yarn-cache.txz) = 181553816
+SHA256 (node-v16.19.0-headers.tar.gz) = d0b02ce3d1198d41127daf64f204195252abff6a22da70830aaed846ba6ad864
+SIZE (node-v16.19.0-headers.tar.gz) = 568145

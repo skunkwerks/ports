@@ -1,0 +1,35 @@
+#!/bin/sh
+
+# PROVIDE: hedgedoc
+# REQUIRE: DAEMON NETWORKING
+# KEYWORD: shutdown
+
+# Add the following lines to /etc/rc.conf to enable hedgedoc
+#
+# hedgedoc_enable (bool):   set to NO by default
+# hedgedoc_config (string): optional full path to config.json
+# hedgedoc_user   (string): optional user to run as
+# hedgedoc_group  (string): optional user to run as
+
+. /etc/rc.subr
+
+name="hedgedoc"
+rcvar="hedgedoc_enable"
+
+load_rc_config $name
+
+: ${hedgedoc_enable="NO"}
+: ${hedgedoc_chdir="%%LOCALBASE%%/libexec/hedgedoc"}
+: ${hedgedoc_config:="%%ETCDIR%%/config.json"}
+: ${hedgedoc_group:="www"}
+: ${hedgedoc_user:="www"}
+: ${hedgedoc_env="NODE_ENV=production HOME=/var/db/hedgedoc CMD_CONFIG_FILE=${hedgedoc_config}"}
+
+start_precmd="install -o www /dev/null ${pidfile}"
+
+command="/usr/sbin/daemon"
+command_args="-t hedgedoc -T hedgedoc \
+    -u ${hedgedoc_user} \
+    -r -R 30 /usr/bin/env ${hedgedoc_env} /usr/local/bin/node app.js"
+
+run_rc_command "$1"
