@@ -1,8 +1,6 @@
 PORTNAME=	esbuild
 DISTVERSIONPREFIX=	v
-# DO NOT UPDATE WITHOUT THIS BEING DONE
-# post to phabricator & chromium@ before committing so they can update
-DISTVERSION=	0.28.2
+DISTVERSION=	${ESBUILD_VERSION}
 CATEGORIES=	devel www
 
 MAINTAINER=	dch@FreeBSD.org
@@ -18,4 +16,5 @@ GO_TARGET=	./cmd/esbuild:esbuild
 
 PLIST_FILES=	bin/${PORTNAME}
 
+.include "Makefile.version"
 .include <bsd.port.mk>

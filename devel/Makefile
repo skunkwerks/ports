@@ -701,6 +701,7 @@
     SUBDIR += erlang-rebar3_hex
     SUBDIR += erlang-recon
     SUBDIR += esbuild
+    SUBDIR += esbuild-node
     SUBDIR += estd
     SUBDIR += etcd
     SUBDIR += etcd34

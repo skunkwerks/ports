@@ -1,0 +1,5 @@
+The esbuild package for Node.js: the JavaScript API (build, transform,
+context) and type definitions that npm users get with "npm install
+esbuild". It drives the native binary from devel/esbuild, which is
+always the same version, so ports that bundle JavaScript with esbuild
+can use it without fetching their own copy.
