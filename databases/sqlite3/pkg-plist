@@ -1,5 +1,6 @@
 %%NO_TEA%%bin/sqlite3
 %%NO_TEA%%bin/sqldiff
+%%RSYNC%%bin/sqlite3_rsync
 %%TCL%%bin/sqlite3_analyzer
 %%NO_TEA%%include/sqlite_cfg.h
 %%NO_TEA%%include/sqlite3.h

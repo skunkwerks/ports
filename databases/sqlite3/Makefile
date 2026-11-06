@@ -67,6 +67,9 @@ CONFLICTS_INSTALL=	sqlite3 sqlite3-icu sqlite3-tcl tcl-sqlite3 # include/sqlite3
 SUB_FILES=	example.tcl
 SUB_LIST=	TCLSH_CMD=${TCLSH}
 
+SUB_LIST+=	RSYNC="" NO_RSYNC="@comment "
+PLIST_SUB+=	RSYNC="" NO_RSYNC="@comment "
+
 .if defined(TEA)
 PKGNAMEPREFIX=	tcl-
 COMMENT=	SQLite extension for Tcl using the Tcl Extension Architecture (TEA)
@@ -88,12 +91,12 @@ SQLITE_DEFAULT_FILE_PERMISSIONS?=	0644	#  https://sqlite.org/compile.html#defaul
 OPTIONS_DEFINE=		EXAMPLES TCL THREADS
 .if !defined(TEA)
 OPTIONS_DEFINE+=	ARMOR DBPAGE DBSTAT DIRECT_READ DQS EXTENSION FTS3_TOKEN \
-			FTS4 FTS5 LIKENOTBLOB MEMMAN METADATA NORMALIZE NULL_TRIM RBU SECURE_DELETE \
+			FTS4 FTS5 LIKENOTBLOB MEMMAN METADATA NORMALIZE NULL_TRIM RBU RSYNC SECURE_DELETE \
 			SORT_REF STATIC STMT TRUSTED_SCHEMA UNKNOWN_SQL UNLOCK_NOTIFY \
 			UPDATE_LIMIT URI URI_AUTHORITY
 .endif
 OPTIONS_DEFAULT=	DBPAGE DBSTAT DIRECT_READ EXTENSION FTS3_TOKEN FTS4 FTS5 LIBEDIT METADATA \
-			RTREE SECURE_DELETE SESSION THREADS TS1 UNICODE61 UNLOCK_NOTIFY URI
+			RSYNC RTREE SECURE_DELETE SESSION THREADS TS1 UNICODE61 UNLOCK_NOTIFY URI
 # SECURE_DELETE, UNLOCK_NOTIFY, DBSTAT (since 41.0) used by www/firefox et al.
 # RTREE used by graphics/mapnik, databases/spatialite
 # FTS3_TOKEN used by audio/clementine-player, mail/thunderbird, www/seamonkey
@@ -148,6 +151,7 @@ OPT_FUNC_DESC=		Optional functions
 RAMT_DESC=		Where to store temporary file # https://sqlite.org/tempfiles.html#tempstore
 RBU_DESC=		Enable the resumable bulk update # https://sqlite.org/rbu.html
 RL_DESC=		Command line editing library
+RSYNC_DESC=		Remote-copy tool # https://sqlite.org/rsync.html
 RTREEG_DESC=		Index type for range queries # https://sqlite.org/rtree.html
 RTREE_DESC=		Enable R*Tree module
 RTREE_INT_DESC=		Store 32-bit sig int (no float) coordinates
@@ -201,6 +205,7 @@ OFFSET_CPPFLAGS=	-DSQLITE_ENABLE_OFFSET_SQL_FUNC=1
 RBU_CPPFLAGS=		-DSQLITE_ENABLE_RBU=1
 READLINE_USES=		readline
 READLINE_CONFIGURE_ENABLE=	readline
+RSYNC_ALL_TARGET+=	sqlite3_rsync
 RTREE_CONFIGURE_ON=	--rtree
 RTREE_INT_CPPFLAGS=	-DSQLITE_RTREE_INT_ONLY=1
 SECURE_DELETE_CPPFLAGS=	-DSQLITE_SECURE_DELETE=1
@@ -257,6 +262,9 @@ post-install:
 .else
 	${RM} ${STAGEDIR}${PREFIX}/lib/libsqlite3.a ${STAGEDIR}${PREFIX}/lib/libsqlite3.so.${PORTVERSION}
 .endif
+
+post-install-RSYNC-on:
+	${INSTALL_PROGRAM} ${WRKSRC}/sqlite3_rsync ${STAGEDIR}${PREFIX}/bin
 
 post-install-TCL-on:
 	${INSTALL_PROGRAM} ${WRKSRC}/sqlite3_analyzer ${STAGEDIR}${PREFIX}/bin
