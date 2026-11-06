@@ -1,5 +1,6 @@
 PORTNAME=	ungoogled-chromium
 PORTVERSION=	156.0.8078.79
+PORTREVISION=	1
 PULSEMV=	16
 PULSEV=		${PULSEMV}.1
 UGVERSION=	${DISTVERSION}-1
@@ -33,7 +34,7 @@ BUILD_DEPENDS=	bash:shells/bash \
 		${PYTHON_PKGNAMEPREFIX}Jinja2>0:devel/py-Jinja2@${PY_FLAVOR} \
 		${PYTHON_PKGNAMEPREFIX}ply>0:devel/py-ply@${PY_FLAVOR} \
 		bindgen:devel/rust-bindgen-cli \
-		esbuild:devel/esbuild \
+		${LOCALBASE}/lib/node_modules/esbuild/package.json:devel/esbuild-node \
 		gperf:devel/gperf \
 		flock:sysutils/flock \
 		node:www/node \
@@ -354,6 +355,10 @@ pre-build:
 		${WRKSRC}/third_party/typescript/linux-amd64/src/lib/tsc
 
 do-configure:
+	${RM} -r ${WRKSRC}/third_party/devtools-frontend/src/node_modules/esbuild
+	${LN} -sf ${LOCALBASE}/lib/node_modules/esbuild \
+		${WRKSRC}/third_party/devtools-frontend/src/node_modules/esbuild
+
 	# GN generator bootstrapping and generating ninja files
 	${LN} -sf ${WRKSRC}/out/${BUILDTYPE}/gn ${WRKSRC}/buildtools/linux64/gn
 	cd ${WRKSRC} && ${SETENV} ${CONFIGURE_ENV} CC=${CC} CXX=${CXX} LD=${CXX} \

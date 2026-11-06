@@ -1,5 +1,6 @@
 PORTNAME=	chromium
 PORTVERSION=	156.0.8078.79
+PORTREVISION=	1
 PULSEMV=	16
 PULSEV=		${PULSEMV}.1
 TSV=		7.0.2
@@ -14,8 +15,7 @@ DISTFILES=	${DISTNAME}-lite${EXTRACT_SUFX} \
 		TypeScript-${TSV}-vendor.tar.gz:external
 
 USE_GITHUB=	nodefault
-GH_TUPLE=	evanw:esbuild:v${_ESBUILD_VERSION:sh}:esbuild/esbuild \
-		microsoft:TypeScript:v${TSV}:typescript/typescript
+GH_TUPLE=	microsoft:TypeScript:v${TSV}:typescript/typescript
 
 MAINTAINER=	chromium@FreeBSD.org
 COMMENT=	Google web browser based on WebKit
@@ -30,7 +30,7 @@ BUILD_DEPENDS=	bash:shells/bash \
 		${PYTHON_PKGNAMEPREFIX}Jinja2>0:devel/py-Jinja2@${PY_FLAVOR} \
 		${PYTHON_PKGNAMEPREFIX}ply>0:devel/py-ply@${PY_FLAVOR} \
 		bindgen:devel/rust-bindgen-cli \
-		esbuild:devel/esbuild \
+		${LOCALBASE}/lib/node_modules/esbuild/package.json:devel/esbuild-node \
 		gperf:devel/gperf \
 		flock:sysutils/flock \
 		node:www/node \
@@ -90,7 +90,6 @@ USES=		bison compiler:c++17-lang cpe desktop-file-utils gl gmake \
 
 WITHOUT_FBSD10_FIX=	Yes
 
-_ESBUILD_VERSION=	${MAKE} -C ${PORTSDIR}/devel/esbuild -V DISTVERSION
 
 CPE_VENDOR=	google
 CPE_PRODUCT=	chrome
@@ -336,13 +335,9 @@ pre-build:
 		${WRKSRC}/third_party/typescript/linux-amd64/src/lib/tsc
 
 do-configure:
-	(cd ${WRKSRC}/esbuild && \
-		${LOCALBASE}/bin/node scripts/esbuild.js \
-		/usr/local/bin/esbuild --neutral && \
-		rm -rf ${WRKSRC}/third_party/devtools-frontend/src/node_modules/esbuild && \
-		ln -sf ${WRKSRC}/esbuild/npm/esbuild \
-		${WRKSRC}/third_party/devtools-frontend/src/node_modules/esbuild \
-	)
+	${RM} -r ${WRKSRC}/third_party/devtools-frontend/src/node_modules/esbuild
+	${LN} -sf ${LOCALBASE}/lib/node_modules/esbuild \
+		${WRKSRC}/third_party/devtools-frontend/src/node_modules/esbuild
 
 	# GN generator bootstrapping and generating ninja files
 	${LN} -sf ${WRKSRC}/out/${BUILDTYPE}/gn ${WRKSRC}/buildtools/linux64/gn

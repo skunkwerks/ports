@@ -1,6 +1,6 @@
 PORTNAME=	iridium
 PORTVERSION=	2026.08.151.2
-PORTREVISION=	6
+PORTREVISION=	7
 PULSEMV=	16
 PULSEV=		${PULSEMV}.1
 CATEGORIES=	www wayland
@@ -13,8 +13,7 @@ DISTFILES=	${DISTNAME}${EXTRACT_SUFX} \
 		pulseaudio-${PULSEV}.tar.gz:pulseaudio
 
 USE_GITHUB=	nodefault
-GH_TUPLE=	rollup:rollup:v4.60.4:rollup/rollup \
-		evanw:esbuild:v${_ESBUILD_VERSION:sh}:esbuild/esbuild
+GH_TUPLE=	rollup:rollup:v4.60.4:rollup/rollup
 
 MAINTAINER=	chromium@FreeBSD.org
 COMMENT=	Iridium browser
@@ -29,7 +28,7 @@ BUILD_DEPENDS=	bash:shells/bash \
 		${PYTHON_PKGNAMEPREFIX}Jinja2>0:devel/py-Jinja2@${PY_FLAVOR} \
 		${PYTHON_PKGNAMEPREFIX}ply>0:devel/py-ply@${PY_FLAVOR} \
 		bindgen:devel/rust-bindgen-cli \
-		esbuild:devel/esbuild \
+		${LOCALBASE}/lib/node_modules/esbuild/package.json:devel/esbuild-node \
 		gperf:devel/gperf \
 		flock:sysutils/flock \
 		node:www/node \
@@ -94,7 +93,6 @@ CARGO_INSTALL=		No
 CARGO_BUILD=		No
 CARGO_TEST=		No
 
-_ESBUILD_VERSION=	${MAKE} -C ${PORTSDIR}/devel/esbuild -V DISTVERSION
 
 CPE_VENDOR=	google
 CPE_PRODUCT=	chrome
@@ -320,13 +318,9 @@ pre-build:
 			> rollup-freebsd/package.json)
 
 do-configure:
-	(cd ${WRKSRC}/esbuild && \
-		${LOCALBASE}/bin/node scripts/esbuild.js \
-		/usr/local/bin/esbuild --neutral && \
-		rm -rf ${WRKSRC}/third_party/devtools-frontend/src/node_modules/esbuild && \
-		ln -sf ${WRKSRC}/esbuild/npm/esbuild \
-		${WRKSRC}/third_party/devtools-frontend/src/node_modules/esbuild \
-	)
+	${RM} -r ${WRKSRC}/third_party/devtools-frontend/src/node_modules/esbuild
+	${LN} -sf ${LOCALBASE}/lib/node_modules/esbuild \
+		${WRKSRC}/third_party/devtools-frontend/src/node_modules/esbuild
 	# GN generator bootstrapping and generating ninja files
 	cd ${WRKSRC} && ${SETENV} ${CONFIGURE_ENV} CC=${CC} CXX=${CXX} LD=${CXX} \
 		READELF=${READELF} AR=${AR} NM=${NM} ${PYTHON_CMD} \

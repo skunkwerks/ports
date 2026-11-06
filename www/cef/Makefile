@@ -1,6 +1,6 @@
 PORTNAME=	cef
 DISTVERSION=	152.0.6
-PORTREVISION=	1
+PORTREVISION=	2
 CATEGORIES=	www devel
 MASTER_SITES=	https://commondatastorage.googleapis.com/chromium-browser-official/:chromium
 DISTFILES=	chromium-${CHROMIUM_VERSION}-lite${EXTRACT_SUFX}:chromium
@@ -39,19 +39,18 @@ CEF_BRANCH_PATCH=	${DISTVERSION:E}
 # added below src/cef, where gclient would put them.
 USE_GITHUB=	nodefault
 GH_TUPLE=	chromiumembedded:cef:${CEF_COMMIT}:cef/cef \
-		rollup:rollup:v4.60.4:rollup/rollup \
-		evanw:esbuild:v${_ESBUILD_VERSION:sh}:esbuild/esbuild
+		rollup:rollup:v4.60.4:rollup/rollup
 
 # Chromium builds devtools-frontend with rollup and esbuild.  Neither ships a
 # FreeBSD binary, so the rollup native binding is built from source (like
 # www/chromium does, hence the shared Makefile.crates) and esbuild is taken
 # from ports.
-_ESBUILD_VERSION=	${MAKE} -C ${PORTSDIR}/devel/esbuild -V DISTVERSION
 
 WRKSRC=		${WRKDIR}/chromium-${CHROMIUM_VERSION}
 
 BUILD_DEPENDS=	${LOCALBASE}/include/linux/videodev2.h:multimedia/v4l_compat \
 		${LOCALBASE}/include/va/va.h:multimedia/libva \
+		${LOCALBASE}/lib/node_modules/esbuild/package.json:devel/esbuild-node \
 		${LOCALBASE}/libdata/pkgconfig/dri.pc:graphics/mesa-libs \
 		${LOCALBASE}/share/usbids/usb.ids:misc/usbids \
 		${PYTHON_PKGNAMEPREFIX}html5lib>0:www/py-html5lib@${PY_FLAVOR} \
@@ -59,7 +58,6 @@ BUILD_DEPENDS=	${LOCALBASE}/include/linux/videodev2.h:multimedia/v4l_compat \
 		${PYTHON_PKGNAMEPREFIX}ply>0:devel/py-ply@${PY_FLAVOR} \
 		bash:shells/bash \
 		bindgen:devel/rust-bindgen-cli \
-		esbuild:devel/esbuild \
 		flock:sysutils/flock \
 		gperf:devel/gperf \
 		rustc:lang/rust \
@@ -368,12 +366,9 @@ pre-build:
 			> rollup-freebsd/package.json)
 
 do-configure:
-	(cd ${WRKSRC}/esbuild && \
-		${LOCALBASE}/bin/node scripts/esbuild.js \
-		${LOCALBASE}/bin/esbuild --neutral && \
-		${RM} -r ${WRKSRC}/third_party/devtools-frontend/src/node_modules/esbuild && \
-		${LN} -sf ${WRKSRC}/esbuild/npm/esbuild \
-		${WRKSRC}/third_party/devtools-frontend/src/node_modules/esbuild)
+	${RM} -r ${WRKSRC}/third_party/devtools-frontend/src/node_modules/esbuild
+	${LN} -sf ${LOCALBASE}/lib/node_modules/esbuild \
+		${WRKSRC}/third_party/devtools-frontend/src/node_modules/esbuild
 	${LN} -sf ${LOCALBASE}/bin/esbuild \
 		${WRKSRC}/third_party/devtools-frontend/src/third_party/esbuild/esbuild
 
