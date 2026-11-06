@@ -1,0 +1,3648 @@
+diff --git a/erts/emulator/Makefile.in b/erts/emulator/Makefile.in
+index 87c7271403..0c0e532c74 100644
+--- a/erts/emulator/Makefile.in
++++ b/erts/emulator/Makefile.in
+@@ -1140,6 +1140,7 @@ JIT_OBJS = \
+     $(OBJDIR)/beam_jit_common.o \
+     $(OBJDIR)/beam_jit_main.o \
+     $(OBJDIR)/beam_jit_metadata.o \
++    $(OBJDIR)/beam_jitc.o \
+     $(OBJDIR)/process_main.o
+ 
+ ifeq ($(JIT_ARCH), x86)
+diff --git a/erts/emulator/beam/atom.c b/erts/emulator/beam/atom.c
+index a4dc975bf2..a566546b2e 100644
+--- a/erts/emulator/beam/atom.c
++++ b/erts/emulator/beam/atom.c
+@@ -327,6 +327,7 @@ erts_atom_put_index(const byte *name, Sint len, ErtsAtomEncoding enc, int trunc)
+     a.len = tlen;
+     a.latin1_chars = (Sint16) no_latin1_chars;
+     a.u.name = (byte *) text;
++
+     atom_write_lock();
+     aix = index_put(&erts_atom_table, (void*) &a);
+     atom_write_unlock();
+@@ -353,6 +354,84 @@ am_atom_put(const char* name, Sint len)
+     return erts_atom_put((byte *) name, len, ERTS_ATOM_ENC_7BIT_ASCII, 1);
+ }
+ 
++/*
++ * Inserts atoms `first` .. `first + count - 1` from `*data`, `count` entries
++ * of (u16 len, utf8 name), advancing `*data`. Used to replay the atom table
++ * snapshot of an erlaotc executable. Entries below the current table size
++ * must match the existing atoms. Returns count, or -1 - index on failure.
++ */
++Sint erts_atom_replay(const byte **data, const byte *end, Uint first, Uint count)
++{
++    const byte *p = *data;
++    Uint existing;
++    Uint i;
++    Sint result = count;
++
++    atom_write_lock();
++    existing = (Uint) erts_atom_table.entries;
++    hash_reserve(&erts_atom_table.htable, (int) (first + count));
++
++    for (i = first; i < first + count; i++) {
++        Uint len;
++        const byte *name;
++        Atom a;
++        IndexSlot *slot;
++        const byte *err_pos;
++        Uint no_chars;
++        Sint no_latin1_chars;
++
++        if (end - p < 2) {
++            result = -1 - (Sint) i;
++            break;
++        }
++        len = p[0] | (p[1] << 8);
++        p += 2;
++        if ((Uint) (end - p) < len) {
++            result = -1 - (Sint) i;
++            break;
++        }
++        name = p;
++        p += len;
++
++        if (i < existing) {
++            Atom *ap = atom_tab(i);
++            if ((Uint) ap->len != len ||
++                sys_memcmp(erts_atom_get_name(ap), name, len) != 0) {
++                result = -1 - (Sint) i;
++                break;
++            }
++            continue;
++        }
++
++        if (i > existing) {
++            /* Atoms were created out of order; cannot continue. */
++            result = -1 - (Sint) i;
++            break;
++        }
++
++        if (erts_analyze_utf8_x((byte *) name, len, &err_pos, &no_chars, NULL,
++                                &no_latin1_chars, MAX_ATOM_CHARACTERS)
++            != ERTS_UTF8_OK) {
++            result = -1 - (Sint) i;
++            break;
++        }
++
++        a.len = (Sint16) len;
++        a.latin1_chars = (Sint16) no_latin1_chars;
++        a.u.name = (byte *) name;
++        slot = index_put_entry(&erts_atom_table, (void *) &a);
++        if (slot->index != (int) i) {
++            result = -1 - (Sint) i;
++            break;
++        }
++        existing = i + 1;
++    }
++
++    atom_write_unlock();
++    *data = p;
++    return result;
++}
++
+ int atom_table_size(void)
+ {
+     int ret;
+diff --git a/erts/emulator/beam/atom.h b/erts/emulator/beam/atom.h
+index 066cb8aa4b..1527f040e2 100644
+--- a/erts/emulator/beam/atom.h
++++ b/erts/emulator/beam/atom.h
+@@ -66,6 +66,7 @@ ERTS_GLB_INLINE int erts_is_atom_str(const char *str, Eterm term, int is_latin1)
+ ERTS_GLB_INLINE int erts_is_atom_index_ok(Uint ix);
+ 
+ const byte *erts_atom_get_name(const Atom *atom);
++Sint erts_atom_replay(const byte **data, const byte *end, Uint first, Uint count);
+ 
+ #if ERTS_GLB_INLINE_INCL_FUNC_DEF
+ ERTS_GLB_INLINE Atom*
+diff --git a/erts/emulator/beam/beam_file.c b/erts/emulator/beam/beam_file.c
+index 1938c5e6ab..51fdbf2eed 100644
+--- a/erts/emulator/beam/beam_file.c
++++ b/erts/emulator/beam/beam_file.c
+@@ -25,6 +25,9 @@
+ #endif
+ 
+ #include <stddef.h>
++#ifdef BEAMASM
++#include "jit/beam_jitc.hpp"
++#endif
+ #include "beam_file.h"
+ #include "beam_load.h"
+ #include "erl_zlib.h"
+@@ -239,6 +242,36 @@ static int beamreader_read_tagged(BeamReader *reader, TaggedNumber *val) {
+     return 1;
+ }
+ 
++#ifdef ERTS_JITC
++static int parse_atom_indices(BeamFile *beam,
++                              const Uint32 *indices,
++                              Uint32 count) {
++    BeamFile_AtomTable *atoms = &beam->atoms;
++    Uint32 i;
++
++    if (count < 2) {
++        return 0;
++    }
++
++    atoms->entries = erts_alloc(ERTS_ALC_T_PREPARED_CODE,
++                                count * sizeof(atoms->entries[0]));
++    atoms->entries[0] = THE_NON_VALUE;
++    atoms->count = count;
++
++    for (i = 1; i < count; i++) {
++        Uint32 v;
++        sys_memcpy(&v, &indices[i], sizeof(v));
++        if (v == 0xFFFFFFFFu || !erts_is_atom_index_ok(v)) {
++            return 0;
++        }
++        atoms->entries[i] = make_atom(v);
++    }
++
++    beam->module = atoms->entries[1];
++    return 1;
++}
++#endif
++
+ static int parse_atom_chunk(BeamFile *beam,
+                             IFF_Chunk *chunk) {
+     BeamFile_AtomTable *atoms;
+@@ -1602,6 +1635,7 @@ beamfile_read(const byte *data, size_t size, BeamFile *beam) {
+         MakeIffId('M', 'e', 't', 'a'), /* 13 */
+         MakeIffId('D', 'b', 'g', 'B'), /* 14 */
+         MakeIffId('R', 'e', 'c', 's'), /* 15 */
++        MakeIffId('J', 'I', 'T', 'C'), /* 16 */
+     };
+ 
+     static const int UTF8_ATOM_CHUNK = 0;
+@@ -1622,10 +1656,12 @@ beamfile_read(const byte *data, size_t size, BeamFile *beam) {
+     static const int META_CHUNK = 13;
+     static const int DEBUG_CHUNK = 14;
+     static const int RECORD_CHUNK = 15;
++    static const int JITC_CHUNK = 16;
+ 
+     static const int NUM_CHUNKS = sizeof(chunk_iffs) / sizeof(chunk_iffs[0]);
+ 
+     enum beamfile_read_result error;
++    int jitc_checksum = 0;
+ 
+     /* MSVC doesn't like the use of NUM_CHUNKS here */
+     IFF_Chunk chunks[sizeof(chunk_iffs) / sizeof(chunk_iffs[0])];
+@@ -1659,9 +1695,30 @@ beamfile_read(const byte *data, size_t size, BeamFile *beam) {
+             error = BEAMFILE_READ_OBSOLETE_ATOM_TABLE;
+         }
+         goto error;
+-    } else if (!parse_atom_chunk(beam, &chunks[UTF8_ATOM_CHUNK])) {
+-        error = BEAMFILE_READ_CORRUPT_ATOM_TABLE;
+-        goto error;
++    } else {
++        int parsed = 0;
++#ifdef ERTS_JITC
++        if (chunks[JITC_CHUNK].size > 0) {
++            const Uint32 *indices;
++            Uint32 count;
++            const byte *checksum;
++            if (beamjitc_atom_indices(chunks[JITC_CHUNK].data,
++                                      chunks[JITC_CHUNK].size,
++                                      &indices,
++                                      &count,
++                                      &checksum)) {
++                parsed = parse_atom_indices(beam, indices, count);
++                if (parsed) {
++                    sys_memcpy(beam->checksum, checksum, sizeof(beam->checksum));
++                    jitc_checksum = 1;
++                }
++            }
++        }
++#endif
++        if (!parsed && !parse_atom_chunk(beam, &chunks[UTF8_ATOM_CHUNK])) {
++            error = BEAMFILE_READ_CORRUPT_ATOM_TABLE;
++            goto error;
++        }
+     }
+ 
+     if (chunks[IMP_CHUNK].size == 0) {
+@@ -1742,6 +1799,9 @@ beamfile_read(const byte *data, size_t size, BeamFile *beam) {
+     beam->strings.data = chunks[STR_CHUNK].data;
+     beam->strings.size = chunks[STR_CHUNK].size;
+ 
++    beam->jitc.data = chunks[JITC_CHUNK].data;
++    beam->jitc.size = chunks[JITC_CHUNK].size;
++
+     beam->attributes.data = chunks[ATTR_CHUNK].data;
+     beam->attributes.size = chunks[ATTR_CHUNK].size;
+ 
+@@ -1749,7 +1809,7 @@ beamfile_read(const byte *data, size_t size, BeamFile *beam) {
+     beam->compile_info.size = chunks[COMPILE_CHUNK].size;
+ 
+     /* Compute module checksum. Please keep all parsing above this section */
+-    {
++    if (!jitc_checksum) {
+         erts_md5_state md5;
+ 
+         erts_md5_init(&md5);
+diff --git a/erts/emulator/beam/beam_file.h b/erts/emulator/beam/beam_file.h
+index 5ea5f3b2fe..fa5fb4fc85 100644
+--- a/erts/emulator/beam/beam_file.h
++++ b/erts/emulator/beam/beam_file.h
+@@ -222,7 +222,7 @@ typedef struct {
+     struct {
+         const byte *data;
+         Sint32 size;
+-    } attributes, compile_info, strings;
++    } attributes, compile_info, strings, jitc;
+ } BeamFile;
+ 
+ enum beamfile_read_result {
+diff --git a/erts/emulator/beam/beam_load.c b/erts/emulator/beam/beam_load.c
+index d90462206f..8098a95bc2 100644
+--- a/erts/emulator/beam/beam_load.c
++++ b/erts/emulator/beam/beam_load.c
+@@ -44,6 +44,9 @@
+ #include "erl_process_dict.h"
+ #include "erl_unicode.h"
+ #include "beam_file.h"
++#ifdef BEAMASM
++#include "jit/beam_jitc.hpp"
++#endif
+ 
+ Uint erts_total_code_size;
+ 
+@@ -132,6 +135,10 @@ erts_prepare_loading(Binary* magic, Process *c_p, Eterm group_leader,
+     stp = ERTS_MAGIC_BIN_DATA(magic);
+     stp->module = *modp;
+     stp->group_leader = group_leader;
++#ifdef ERTS_JITC
++    stp->src_code = code;
++    stp->src_size = unloaded_size;
++#endif
+ 
+ #if defined(LOAD_MEMORY_HARD_DEBUG) && defined(DEBUG)
+     erts_fprintf(stderr,"Loading a module\n");
+@@ -430,6 +437,19 @@ static int load_code(LoaderState* stp)
+         goto load_error;
+     }
+ 
++#ifdef ERTS_JITC
++    if (stp->jitc) {
++        if (!beam_load_jitc_restore(stp)) {
++            BeamLoadError0(stp, "corrupt JITC chunk");
++        }
++
++        beamcodereader_close(op_reader);
++        beamopallocator_dtor(&stp->op_allocator);
++
++        return beam_load_finish_emit(stp);
++    }
++#endif
++
+     for (;;) {
+     get_next_instr:
+         if (!beamcodereader_next(op_reader, &last_op)) {
+diff --git a/erts/emulator/beam/beam_load.h b/erts/emulator/beam/beam_load.h
+index 151f87e31c..99ee61d936 100644
+--- a/erts/emulator/beam/beam_load.h
++++ b/erts/emulator/beam/beam_load.h
+@@ -58,6 +58,7 @@ typedef struct LoaderState_ LoaderState;
+ int beam_load_prepared_dtor(Binary *magic);
+ void beam_load_prepared_free(Binary *magic);
+ 
++int beam_load_jitc_restore(LoaderState *stp);
+ int beam_load_prepare_emit(LoaderState *stp);
+ int beam_load_emit_op(LoaderState *stp, BeamOp *op);
+ int beam_load_finish_emit(LoaderState *stp);
+diff --git a/erts/emulator/beam/erl_aot.c b/erts/emulator/beam/erl_aot.c
+index ac7fb592c9..ef6d98ba6f 100644
+--- a/erts/emulator/beam/erl_aot.c
++++ b/erts/emulator/beam/erl_aot.c
+@@ -22,38 +22,81 @@
+ 
+ /* Executables built by erlaotc: the emulator followed by a zip archive whose
+  * comment holds the arguments ("erlaotc <vsn>\n" then one per line, $ROOT
+- * being the executable). */
++ * being the executable) and which holds the atom table snapshot and the
++ * recorded preloaded modules under erts-<vsn>/jitc/. */
+ 
+ #ifdef HAVE_CONFIG_H
+ #  include "config.h"
+ #endif
+ 
+ #include "sys.h"
++#include "erl_vm.h"
++#include "global.h"
++#include "atom.h"
+ #include "erl_aot.h"
+ #include "erl_version.h"
++#include "jit/beam_jitc.hpp"
++
++int erts_aot_recording = 0;
++int erts_aot_active = 0;
++unsigned char erts_aot_build_id[16];
+ 
+ #ifndef __WIN32__
+ 
+ #include <fcntl.h>
+ #include <unistd.h>
+ #include <sys/stat.h>
++#include <sys/mman.h>
+ #include <sys/wait.h>
+ #include <errno.h>
+ #include <limits.h>
+ #ifdef __APPLE__
+ #  include <mach-o/dyld.h>
++#  include <mach-o/loader.h>
++#endif
++#ifdef __linux__
++#  include <link.h>
++#  include <elf.h>
+ #endif
+ 
+ #define MAGIC "erlaotc " ERLANG_VERSION "\n"
+ #define ROOT_VAR "$ROOT"
++#define JITC_DIR "erts-" ERLANG_VERSION "/jitc/"
++
++/* magic, uuid[16], build id[16], u32 count, (u16 len, name)* */
++#define ATOMS_MAGIC "ERLATOMS"
++#define ATOMS_HEADER_SIZE 44
+ 
+ #define EOCD_SIZE 22
+ #define EOCD_SIGNATURE 0x06054b50
++#define CD_SIGNATURE 0x02014b50
++#define LOCAL_SIGNATURE 0x04034b50
+ #define MAX_COMMENT_SIZE 65535
+ 
+ static char exe_path[PATH_MAX];
+ static int have_exe = 0;
+ 
++static const byte *exe_map = NULL;
++static size_t exe_size = 0;
++
++typedef struct {
++    const char *name; /* not NUL-terminated */
++    Uint32 name_len;
++    Uint32 method;
++    Uint32 size;
++    const byte *data; /* NULL until located */
++    Uint32 local_offset;
++} ZipEntry;
++
++static ZipEntry *entries = NULL;
++static Uint32 n_entries = 0;
++
++static const char *record_dir = NULL;
++
++static const byte *atoms = NULL;
++static const byte *atoms_end = NULL;
++static Uint32 n_atoms = 0;
++
+ const char *erts_aot_exe_path(void)
+ {
+     return have_exe ? exe_path : NULL;
+@@ -116,45 +159,139 @@ static int resolve_self_path(const char *argv0)
+ #endif
+ }
+ 
+-static Uint32 get_le32(const unsigned char *p)
++static Uint32 get_le16(const byte *p)
++{
++    return (Uint32)p[0] | ((Uint32)p[1] << 8);
++}
++
++static Uint32 get_le32(const byte *p)
+ {
+     return (Uint32)p[0] | ((Uint32)p[1] << 8) | ((Uint32)p[2] << 16) |
+            ((Uint32)p[3] << 24);
+ }
+ 
+-static char *read_comment(int fd, off_t file_size)
++/* ------------------------------------------------------------------------
++ * The archive
++ * ------------------------------------------------------------------------ */
++
++static size_t find_eocd(void)
+ {
+-    unsigned char *tail;
+-    size_t tail_size, i;
+-    char *comment = NULL;
++    size_t tail = MAX_COMMENT_SIZE + EOCD_SIZE, i;
+ 
+-    tail_size = MAX_COMMENT_SIZE + EOCD_SIZE;
+-    if ((off_t)tail_size > file_size)
+-        tail_size = (size_t)file_size;
+-    if (tail_size < EOCD_SIZE)
+-        return NULL;
+-    tail = xmalloc(tail_size);
+-    if (pread(fd, tail, tail_size, file_size - (off_t)tail_size) !=
+-        (ssize_t)tail_size) {
+-        free(tail);
++    if (tail > exe_size)
++        tail = exe_size;
++    if (tail < EOCD_SIZE)
++        return 0;
++    for (i = exe_size - EOCD_SIZE + 1; i-- > exe_size - tail; ) {
++        if (get_le32(exe_map + i) == EOCD_SIGNATURE &&
++            get_le16(exe_map + i + 20) == exe_size - i - EOCD_SIZE) {
++            return i;
++        }
++    }
++    return 0;
++}
++
++static char *read_comment(size_t eocd)
++{
++    size_t len;
++    char *comment;
++
++    if (eocd == 0)
+         return NULL;
++    len = exe_size - eocd - EOCD_SIZE;
++    comment = xmalloc(len + 1);
++    memcpy(comment, exe_map + eocd + EOCD_SIZE, len);
++    comment[len] = '\0';
++    return comment;
++}
++
++static void read_central_directory(size_t eocd)
++{
++    const byte *cd, *end;
++    Uint32 cd_size, cd_offset, i;
++
++    n_entries = get_le16(exe_map + eocd + 10);
++    cd_size = get_le32(exe_map + eocd + 12);
++    cd_offset = get_le32(exe_map + eocd + 16);
++    if ((size_t)cd_offset + cd_size > eocd)
++        fatal("corrupt archive", "central directory");
++    cd = exe_map + cd_offset;
++    end = cd + cd_size;
++
++    entries = xmalloc(sizeof(ZipEntry) * (n_entries + 1));
++    for (i = 0; i < n_entries; i++) {
++        ZipEntry *e = &entries[i];
++        Uint32 extra_len, comment_len;
++
++        if (end - cd < 46 || get_le32(cd) != CD_SIGNATURE)
++            fatal("corrupt archive", "central directory entry");
++        e->method = get_le16(cd + 10);
++        e->size = get_le32(cd + 24);
++        e->name_len = get_le16(cd + 28);
++        extra_len = get_le16(cd + 30);
++        comment_len = get_le16(cd + 32);
++        e->local_offset = get_le32(cd + 42);
++        e->name = (const char *)cd + 46;
++        e->data = NULL;
++        cd += 46 + e->name_len + extra_len + comment_len;
++        if (cd > end)
++            fatal("corrupt archive", "central directory entry");
+     }
++}
+ 
+-    for (i = tail_size - EOCD_SIZE + 1; i-- > 0; ) {
+-        if (get_le32(tail + i) == EOCD_SIGNATURE &&
+-            tail[i + 20] + (tail[i + 21] << 8) ==
+-            (int)(tail_size - i - EOCD_SIZE)) {
+-            size_t len = tail_size - i - EOCD_SIZE;
+-            comment = xmalloc(len + 1);
+-            memcpy(comment, tail + i + EOCD_SIZE, len);
+-            comment[len] = '\0';
+-            break;
+-        }
++static const byte *entry_data(ZipEntry *e)
++{
++    const byte *lh;
++
++    if (e->data != NULL)
++        return e->data;
++    if (e->method != 0)
++        fatal("compressed entry in the archive", e->name);
++    if ((size_t)e->local_offset + 30 > exe_size)
++        fatal("corrupt archive", e->name);
++    lh = exe_map + e->local_offset;
++    if (get_le32(lh) != LOCAL_SIGNATURE)
++        fatal("corrupt archive", e->name);
++    lh += 30 + get_le16(lh + 26) + get_le16(lh + 28);
++    if ((size_t)(lh - exe_map) + e->size > exe_size)
++        fatal("corrupt archive", e->name);
++    e->data = lh;
++    return lh;
++}
++
++static int name_is(const ZipEntry *e, const char *name)
++{
++    return strlen(name) == e->name_len &&
++           memcmp(e->name, name, e->name_len) == 0;
++}
++
++static int name_starts_with(const ZipEntry *e, const char *prefix)
++{
++    size_t len = strlen(prefix);
++    return e->name_len >= len && memcmp(e->name, prefix, len) == 0;
++}
++
++static int name_ends_with(const ZipEntry *e, const char *suffix)
++{
++    size_t len = strlen(suffix);
++    return e->name_len >= len &&
++           memcmp(e->name + e->name_len - len, suffix, len) == 0;
++}
++
++static ZipEntry *find_entry(const char *name)
++{
++    Uint32 i;
++    for (i = 0; i < n_entries; i++) {
++        if (name_is(&entries[i], name))
++            return &entries[i];
+     }
+-    free(tail);
+-    return comment;
++    return NULL;
+ }
+ 
++/* ------------------------------------------------------------------------
++ * Start
++ * ------------------------------------------------------------------------ */
++
+ static char *expand_arg(const char *arg)
+ {
+     if (strncmp(arg, ROOT_VAR, strlen(ROOT_VAR)) == 0) {
+@@ -200,25 +337,60 @@ static void maybe_start_epmd(int argc, char **argv)
+         fatal("cannot start epmd", "epmd failed");
+ }
+ 
+-void erts_aot_early_args(int *argc, char ***argv)
++static size_t map_executable(void)
+ {
+     struct stat st;
+-    int fd, n, i;
+-    char *comment, *line, *next;
+-    char **args;
+-    const char *env;
++    int fd;
++    void *p;
+ 
+-    if (*argc < 1 || !resolve_self_path((*argv)[0]))
+-        return;
+     fd = open(exe_path, O_RDONLY | O_CLOEXEC);
+     if (fd < 0)
+-        return;
+-    if (fstat(fd, &st) != 0 || !S_ISREG(st.st_mode)) {
++        return 0;
++    if (fstat(fd, &st) != 0 || !S_ISREG(st.st_mode) || st.st_size == 0) {
+         close(fd);
+-        return;
++        return 0;
+     }
+-    comment = read_comment(fd, st.st_size);
++    p = mmap(NULL, (size_t)st.st_size, PROT_READ, MAP_PRIVATE, fd, 0);
+     close(fd);
++    if (p == MAP_FAILED)
++        return 0;
++    exe_map = p;
++    exe_size = (size_t)st.st_size;
++    return find_eocd();
++}
++
++static void find_atoms(void)
++{
++    ZipEntry *e = find_entry(JITC_DIR "atoms");
++    const byte *p;
++    unsigned char uuid[16];
++
++    if (e == NULL)
++        return;
++    p = entry_data(e);
++    if (e->size < ATOMS_HEADER_SIZE || memcmp(p, ATOMS_MAGIC, 8) != 0)
++        fatal("corrupt atom table snapshot", e->name);
++    erts_aot_emulator_uuid(uuid);
++    if (memcmp(p + 8, uuid, 16) != 0)
++        fatal("the archive was compiled for another emulator build", "");
++    memcpy(erts_aot_build_id, p + 24, 16);
++    n_atoms = get_le32(p + 40);
++    atoms = p + ATOMS_HEADER_SIZE;
++    atoms_end = p + e->size;
++}
++
++void erts_aot_early_args(int *argc, char ***argv)
++{
++    size_t eocd;
++    int n, i;
++    char *comment, *line, *next;
++    char **args;
++    const char *env;
++
++    if (*argc < 1 || !resolve_self_path((*argv)[0]))
++        return;
++    eocd = map_executable();
++    comment = read_comment(eocd);
+     if (comment == NULL)
+         return;
+     if (strncmp(comment, "erlaotc ", 8) != 0) {
+@@ -228,6 +400,21 @@ void erts_aot_early_args(int *argc, char ***argv)
+     if (strncmp(comment, MAGIC, strlen(MAGIC)) != 0)
+         fatal("the archive was built for another version of erts", comment);
+     have_exe = 1;
++    read_central_directory(eocd);
++
++    if (*argc >= 3 && strcmp((*argv)[1], "-erlaot:record") == 0) {
++        record_dir = (*argv)[2];
++        erts_aot_recording = 1;
++        args = xmalloc(sizeof(char *) * 3);
++        args[0] = (*argv)[0];
++        args[1] = "--";
++        args[2] = NULL;
++        *argc = 2;
++        *argv = args;
++        return;
++    }
++
++    find_atoms();
+ 
+     n = 0;
+     for (line = comment; *line != '\0'; line++) {
+@@ -267,6 +454,335 @@ void erts_aot_early_args(int *argc, char ***argv)
+     maybe_start_epmd(*argc, *argv);
+ }
+ 
++/* ------------------------------------------------------------------------
++ * Emulator identity
++ * ------------------------------------------------------------------------ */
++
++#ifdef __linux__
++static int build_id_callback(struct dl_phdr_info *info, size_t size, void *out)
++{
++    int i;
++    (void)size;
++    for (i = 0; i < info->dlpi_phnum; i++) {
++        const ElfW(Phdr) *ph = &info->dlpi_phdr[i];
++        const byte *p, *end;
++        if (ph->p_type != PT_NOTE)
++            continue;
++        p = (const byte *)(info->dlpi_addr + ph->p_vaddr);
++        end = p + ph->p_memsz;
++        while (p + sizeof(ElfW(Nhdr)) <= end) {
++            const ElfW(Nhdr) *nh = (const ElfW(Nhdr) *)p;
++            const byte *name = p + sizeof(ElfW(Nhdr));
++            const byte *desc = name + ((nh->n_namesz + 3) & ~3u);
++            if (nh->n_type == NT_GNU_BUILD_ID && nh->n_namesz == 4 &&
++                memcmp(name, "GNU", 4) == 0 && nh->n_descsz >= 8) {
++                memset(out, 0, 16);
++                memcpy(out, desc, nh->n_descsz < 16 ? nh->n_descsz : 16);
++                return 1;
++            }
++            p = desc + ((nh->n_descsz + 3) & ~3u);
++        }
++    }
++    return 1;
++}
++#endif
++
++void erts_aot_emulator_uuid(unsigned char out[16])
++{
++    static int have = 0;
++    static unsigned char uuid[16];
++
++    if (!have) {
++        int found = 0;
++#if defined(__APPLE__)
++        const struct mach_header_64 *mh =
++            (const struct mach_header_64 *)_dyld_get_image_header(0);
++        const struct load_command *lc = (const struct load_command *)(mh + 1);
++        uint32_t i;
++        for (i = 0; i < mh->ncmds; i++) {
++            if (lc->cmd == LC_UUID) {
++                memcpy(uuid, ((const struct uuid_command *)lc)->uuid, 16);
++                found = 1;
++                break;
++            }
++            lc = (const struct load_command *)((const char *)lc + lc->cmdsize);
++        }
++#elif defined(__linux__)
++        memset(uuid, 0, sizeof(uuid));
++        dl_iterate_phdr(build_id_callback, uuid);
++        {
++            int i;
++            for (i = 0; i < 16; i++)
++                found |= uuid[i] != 0;
++        }
++#endif
++        if (!found) {
++            const char *s = ERLANG_VERSION " " __DATE__ " " __TIME__;
++            Uint64 h = 1469598103934665603ULL;
++            int i;
++            for (i = 0; s[i]; i++) {
++                h = (h ^ (unsigned char)s[i]) * 1099511628211ULL;
++            }
++            memset(uuid, 0, sizeof(uuid));
++            memcpy(uuid, &h, 8);
++        }
++        have = 1;
++    }
++    memcpy(out, uuid, 16);
++}
++
++/* ------------------------------------------------------------------------
++ * The atom table snapshot
++ * ------------------------------------------------------------------------ */
++
++Uint erts_aot_atom_count(void)
++{
++    return n_atoms;
++}
++
++void erts_aot_image_init(void)
++{
++    const byte *pos = atoms;
++    Sint res;
++
++    if (erts_aot_recording) {
++        int fd = open("/dev/urandom", O_RDONLY);
++        if (fd < 0 || read(fd, erts_aot_build_id, 16) != 16)
++            fatal("cannot read /dev/urandom", strerror(errno));
++        close(fd);
++        return;
++    }
++
++    if (atoms == NULL)
++        return;
++
++    res = erts_atom_replay(&pos, atoms_end, 0, n_atoms);
++    if (res < 0) {
++        fprintf(stderr, "%s: cannot replay atom %ld of the snapshot\n",
++                exe_path, (long) (-1 - res));
++        exit(1);
++    }
++    erts_aot_active = 1;
++}
++
++int erts_aot_preloaded(const char *name, const byte **code, Uint *size)
++{
++    char path[256];
++    ZipEntry *e = NULL;
++    int n;
++
++    if (!erts_aot_active)
++        return 0;
++
++    n = snprintf(path, sizeof(path), JITC_DIR "preloaded/%s.beam", name);
++    if (n > 0 && n < (int)sizeof(path))
++        e = find_entry(path);
++    if (e == NULL)
++        fatal("the recorded preloaded module is missing", name);
++    *code = entry_data(e);
++    *size = e->size;
++    return 1;
++}
++
++/* ------------------------------------------------------------------------
++ * Recording
++ * ------------------------------------------------------------------------ */
++
++#ifdef ERTS_JITC
++
++static void mkdir_p(const char *path)
++{
++    char *copy = xmalloc(strlen(path) + 1), *p;
++
++    strcpy(copy, path);
++    for (p = copy + 1; *p != '\0'; p++) {
++        if (*p == '/') {
++            *p = '\0';
++            if (mkdir(copy, 0755) != 0 && errno != EEXIST)
++                fatal("cannot create directory", copy);
++            *p = '/';
++        }
++    }
++    if (mkdir(copy, 0755) != 0 && errno != EEXIST)
++        fatal("cannot create directory", copy);
++    free(copy);
++}
++
++static void write_file(const char *name, const byte *data, size_t size)
++{
++    char *path = xmalloc(strlen(record_dir) + strlen(name) + 2);
++    char *slash;
++    int fd;
++
++    sprintf(path, "%s/%s", record_dir, name);
++    slash = strrchr(path, '/');
++    *slash = '\0';
++    mkdir_p(path);
++    *slash = '/';
++
++    fd = open(path, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644);
++    if (fd < 0)
++        fatal("cannot create file", path);
++    while (size > 0) {
++        ssize_t w = write(fd, data, size);
++        if (w < 0) {
++            if (errno == EINTR)
++                continue;
++            fatal("cannot write file", path);
++        }
++        data += w;
++        size -= (size_t)w;
++    }
++    close(fd);
++    free(path);
++}
++
++static int entry_module(const ZipEntry *e, char *name, size_t size)
++{
++    const char *base = e->name + e->name_len;
++    size_t len;
++
++    while (base > e->name && base[-1] != '/')
++        base--;
++    len = e->name + e->name_len - base;
++    if (len < 6 || len - 5 >= size)
++        return 0;
++    memcpy(name, base, len - 5);
++    name[len - 5] = '\0';
++    return 1;
++}
++
++static int is_lib_beam(const ZipEntry *e)
++{
++    return name_starts_with(e, "lib/") && name_ends_with(e, ".beam");
++}
++
++static void record_load(ZipEntry *e)
++{
++    char name[MAX_ATOM_SZ_LIMIT];
++    const byte *code = entry_data(e);
++    Eterm module, res;
++
++    if (!entry_module(e, name, sizeof(name)))
++        fatal("bad module name", e->name);
++    module = erts_atom_put((byte *)name, strlen(name), ERTS_ATOM_ENC_UTF8, 1);
++    res = erts_preload_module(NULL, 0, NIL, &module, code, e->size);
++    if (res != NIL && res != am_on_load) {
++        erts_fprintf(stderr, "%s: cannot load %s: %T\n", exe_path, e->name,
++                     res);
++        exit(1);
++    }
++}
++
++static int recorded_index(const char *name)
++{
++    int j, n = beamjitc_recorded_count();
++    for (j = 0; j < n; j++) {
++        char rname[MAX_ATOM_SZ_LIMIT];
++        const byte *data;
++        size_t size;
++        beamjitc_recorded_get(j, rname, sizeof(rname), &data, &size);
++        if (strcmp(name, rname) == 0)
++            return j;
++    }
++    return -1;
++}
++
++void erts_aot_record_run(void)
++{
++    Uint32 i;
++    int j, n_recorded, n;
++    Uint count;
++    byte *snapshot, *p;
++    size_t snapshot_size;
++    unsigned char uuid[16];
++    char path[512];
++
++    if (!erts_aot_recording)
++        return;
++
++    for (i = 0; i < n_entries; i++) {
++        if (is_lib_beam(&entries[i]))
++            record_load(&entries[i]);
++    }
++
++    n_recorded = beamjitc_recorded_count();
++    for (i = 0; i < n_entries; i++) {
++        char name[MAX_ATOM_SZ_LIMIT];
++        const byte *data;
++        size_t size;
++        char *ename;
++
++        if (!is_lib_beam(&entries[i]))
++            continue;
++        entry_module(&entries[i], name, sizeof(name));
++        j = recorded_index(name);
++        if (j < 0)
++            fatal("the module was not recorded", name);
++        beamjitc_recorded_get(j, name, sizeof(name), &data, &size);
++        ename = xmalloc(entries[i].name_len + 1);
++        memcpy(ename, entries[i].name, entries[i].name_len);
++        ename[entries[i].name_len] = '\0';
++        write_file(ename, data, size);
++        free(ename);
++    }
++    for (j = 0; j < n_recorded; j++) {
++        char name[MAX_ATOM_SZ_LIMIT];
++        const byte *data;
++        size_t size;
++        int in_archive = 0;
++
++        beamjitc_recorded_get(j, name, sizeof(name), &data, &size);
++        for (i = 0; i < n_entries && !in_archive; i++) {
++            char ename[MAX_ATOM_SZ_LIMIT];
++            in_archive = is_lib_beam(&entries[i]) &&
++                         entry_module(&entries[i], ename, sizeof(ename)) &&
++                         strcmp(name, ename) == 0;
++        }
++        if (in_archive)
++            continue;
++        n = snprintf(path, sizeof(path), JITC_DIR "preloaded/%s.beam", name);
++        if (n < 0 || n >= (int)sizeof(path))
++            fatal("module name too long", name);
++        write_file(path, data, size);
++    }
++
++    count = atom_table_size();
++    snapshot_size = ATOMS_HEADER_SIZE;
++    for (i = 0; i < count; i++)
++        snapshot_size += 2 + atom_tab(i)->len;
++    snapshot = p = xmalloc(snapshot_size);
++    memcpy(p, ATOMS_MAGIC, 8);
++    erts_aot_emulator_uuid(uuid);
++    memcpy(p + 8, uuid, 16);
++    memcpy(p + 24, erts_aot_build_id, 16);
++    p[40] = count & 0xff;
++    p[41] = (count >> 8) & 0xff;
++    p[42] = (count >> 16) & 0xff;
++    p[43] = (count >> 24) & 0xff;
++    p += ATOMS_HEADER_SIZE;
++    for (i = 0; i < count; i++) {
++        Atom *a = atom_tab(i);
++        p[0] = a->len & 0xff;
++        p[1] = (a->len >> 8) & 0xff;
++        memcpy(p + 2, erts_atom_get_name(a), a->len);
++        p += 2 + a->len;
++    }
++    write_file(JITC_DIR "atoms", snapshot, snapshot_size);
++
++    exit(0);
++}
++
++#else /* !ERTS_JITC */
++
++void erts_aot_record_run(void)
++{
++    if (erts_aot_recording)
++        exit(0);
++}
++
++#endif
++
+ #else /* __WIN32__ */
+ 
+ void erts_aot_early_args(int *argc, char ***argv)
+@@ -286,4 +802,30 @@ const char *erts_aot_helper_marker(const char *program)
+     return NULL;
+ }
+ 
++void erts_aot_image_init(void)
++{
++}
++
++void erts_aot_emulator_uuid(unsigned char out[16])
++{
++    memset(out, 0, 16);
++}
++
++Uint erts_aot_atom_count(void)
++{
++    return 0;
++}
++
++int erts_aot_preloaded(const char *name, const byte **code, Uint *size)
++{
++    (void)name;
++    (void)code;
++    (void)size;
++    return 0;
++}
++
++void erts_aot_record_run(void)
++{
++}
++
+ #endif
+diff --git a/erts/emulator/beam/erl_aot.h b/erts/emulator/beam/erl_aot.h
+index 5ea99de1f3..8b44edc5cd 100644
+--- a/erts/emulator/beam/erl_aot.h
++++ b/erts/emulator/beam/erl_aot.h
+@@ -30,4 +30,21 @@ const char *erts_aot_exe_path(void);
+ /* <exe>/bin/<helper> is run as <exe> <marker> */
+ const char *erts_aot_helper_marker(const char *program);
+ 
++void erts_aot_image_init(void);
++
++extern int erts_aot_recording;
++
++/* JITC chunks are used only when the atom table snapshot is in place */
++extern int erts_aot_active;
++
++extern unsigned char erts_aot_build_id[16];
++
++void erts_aot_emulator_uuid(unsigned char out[16]);
++
++Uint erts_aot_atom_count(void);
++
++int erts_aot_preloaded(const char *name, const byte **code, Uint *size);
++
++void erts_aot_record_run(void);
++
+ #endif
+diff --git a/erts/emulator/beam/erl_init.c b/erts/emulator/beam/erl_init.c
+index 61c9f037c5..b0074c091e 100644
+--- a/erts/emulator/beam/erl_init.c
++++ b/erts/emulator/beam/erl_init.c
+@@ -523,6 +523,19 @@ load_preloaded(void)
+     while ((name = preload_p[i].name) != NULL) {
+ 	length = preload_p[i].size;
+ 	module_name = erts_atom_put((byte *) name, sys_strlen(name), ERTS_ATOM_ENC_LATIN1, 1);
++	{
++	    const byte *aot_code;
++	    Uint aot_size;
++	    if (erts_aot_preloaded(name, &aot_code, &aot_size)) {
++		res = erts_preload_module(NULL, 0, NIL, &module_name,
++					  aot_code, aot_size);
++		if (res != NIL)
++		    erts_exit(ERTS_ERROR_EXIT,"Failed loading preloaded module %s (%T)\n",
++			      name, res);
++		i++;
++		continue;
++	    }
++	}
+ 	if ((code = sys_preload_begin(&preload_p[i])) == 0)
+ 	    erts_exit(ERTS_ERROR_EXIT, "Failed to find preloaded code for module %s\n",
+ 		     name);
+@@ -2535,7 +2548,9 @@ erl_start(int argc, char **argv)
+ 	     node_tab_delete_delay,
+ 	     db_spin_count);
+ 
++    erts_aot_image_init();
+     load_preloaded();
++    erts_aot_record_run();
+     erts_end_staging_code_ix();
+     erts_commit_staging_code_ix();
+ 
+diff --git a/erts/emulator/beam/hash.c b/erts/emulator/beam/hash.c
+index ff5b8ef676..fa336b245f 100644
+--- a/erts/emulator/beam/hash.c
++++ b/erts/emulator/beam/hash.c
+@@ -232,6 +232,13 @@ void* hash_get(Hash* h, void* tmpl)
+ /*
+ ** Find or insert an object in the hash table
+ */
++void hash_reserve(Hash* h, int nobjs)
++{
++    while (h->grow_threshold < nobjs) {
++        rehash(h, 1);
++    }
++}
++
+ void* hash_put(Hash* h, void* tmpl)
+ {
+     HashValue hval = h->fun.hash(tmpl);
+diff --git a/erts/emulator/beam/hash.h b/erts/emulator/beam/hash.h
+index c9216176e2..ed857b38c7 100644
+--- a/erts/emulator/beam/hash.h
++++ b/erts/emulator/beam/hash.h
+@@ -96,6 +96,7 @@ int   hash_table_sz(Hash *);
+ 
+ void* hash_get(Hash*, void*);
+ void* hash_put(Hash*, void*);
++void hash_reserve(Hash*, int);
+ void* hash_erase(Hash*, void*);
+ void* hash_remove(Hash*, void*);
+ void  hash_foreach(Hash*, HFOREACH_FUN, void *);
+diff --git a/erts/emulator/beam/jit/arm/beam_asm.hpp b/erts/emulator/beam/jit/arm/beam_asm.hpp
+index efc9ad6a7f..1c6dc49b51 100644
+--- a/erts/emulator/beam/jit/arm/beam_asm.hpp
++++ b/erts/emulator/beam/jit/arm/beam_asm.hpp
+@@ -559,7 +559,7 @@ protected:
+         if (Spec & Update::eCodeIndex) {
+             /* Updates the local copy of the active code index, retaining
+              * save_calls if active. */
+-            mov_imm(SUPER_TMP, &the_active_code_index);
++            mov_ptr(SUPER_TMP, &the_active_code_index);
+             a.ldr(SUPER_TMP.w(), a64::Mem(SUPER_TMP));
+             a.cmp(active_code_ix, imm(ERTS_SAVE_CALLS_CODE_IX));
+             a.csel(active_code_ix,
+@@ -735,6 +735,11 @@ protected:
+         mov_imm(to, 0);
+     }
+ 
++    /* Overridden to record a relocation for JITC chunks */
++    virtual void mov_ptr(a64::Gp to, const void *ptr) {
++        mov_imm(to, ptr);
++    }
++
+     void sub(a64::Gp to, a64::Gp src, int64_t val) {
+         if (val < 0) {
+             add(to, src, -val);
+@@ -1150,6 +1155,16 @@ public:
+     void patchImport(char *rw_base, unsigned index, const Export *import);
+     void patchStrings(char *rw_base, const byte *string);
+ 
++    struct JitcPtrReloc {
++        size_t offset;
++        const void *target;
++    };
++    std::vector<JitcPtrReloc> jitc_ptr_relocs;
++
++    void jitc_pre_relocate() override;
++    void mov_ptr(a64::Gp to, const void *ptr) override;
++    std::vector<byte> jitc_serialize(const struct BeamJitcRecordInfo_ *info);
++
+ protected:
+     void emit_gc_test(const ArgWord &Stack,
+                       const ArgWord &Heap,
+diff --git a/erts/emulator/beam/jit/arm/beam_asm_global.hpp.pl b/erts/emulator/beam/jit/arm/beam_asm_global.hpp.pl
+index 46dc830558..d171764a5e 100644
+--- a/erts/emulator/beam/jit/arm/beam_asm_global.hpp.pl
++++ b/erts/emulator/beam/jit/arm/beam_asm_global.hpp.pl
+@@ -214,6 +214,24 @@ public:
+         return ptrs[lbl];
+     }
+ 
++    size_t getCodeSize() {
++        return code.code_size();
++    }
++
++    fptr fragment_ptr(uint64_t index) {
++        auto it = ptrs.find((GlobalLabels)index);
++        return it == ptrs.end() ? nullptr : it->second;
++    }
++
++    int fragment_index(fptr p) {
++        for (const auto &kv : ptrs) {
++            if (kv.second == p) {
++                return (int)kv.first;
++            }
++        }
++        return -1;
++    }
++
+     enum erts_is_line_breakpoint is_line_breakpoint_trampoline(ErtsCodePtr);
+ 
+ $decl_get_funcs
+diff --git a/erts/emulator/beam/jit/arm/beam_asm_module.cpp b/erts/emulator/beam/jit/arm/beam_asm_module.cpp
+index 126fde6ae3..f6b57623e8 100644
+--- a/erts/emulator/beam/jit/arm/beam_asm_module.cpp
++++ b/erts/emulator/beam/jit/arm/beam_asm_module.cpp
+@@ -437,7 +437,7 @@ static void i_emit_nyi(const char *msg) {
+ void BeamModuleAssembler::emit_nyi(const char *msg) {
+     emit_enter_runtime(0);
+ 
+-    a.mov(ARG1, imm(msg));
++    mov_ptr(ARG1, msg);
+     runtime_call<void (*)(const char *), i_emit_nyi>();
+ 
+     /* Never returns */
+@@ -599,7 +599,7 @@ void BeamModuleAssembler::emit_int_code_end() {
+     for (auto pair : _dispatchTable) {
+         bind_veneer_target(pair.second);
+ 
+-        a.mov(SUPER_TMP, imm(pair.first));
++        mov_ptr(SUPER_TMP, (const void *)pair.first);
+         a.br(SUPER_TMP);
+     }
+ 
+diff --git a/erts/emulator/beam/jit/arm/instr_arith.cpp b/erts/emulator/beam/jit/arm/instr_arith.cpp
+index daf372ebc4..429cebe921 100644
+--- a/erts/emulator/beam/jit/arm/instr_arith.cpp
++++ b/erts/emulator/beam/jit/arm/instr_arith.cpp
+@@ -1026,7 +1026,7 @@ void BeamModuleAssembler::emit_div_rem(const ArgLabel &Fail,
+             fragment_call(ga->get_int_div_rem_guard_shared());
+             a.b_eq(resolve_beam_label(Fail, disp1MB));
+         } else {
+-            a.mov(ARG4, imm(error_mfa));
++            mov_ptr(ARG4, error_mfa);
+             fragment_call(ga->get_int_div_rem_body_shared());
+         }
+ 
+diff --git a/erts/emulator/beam/jit/arm/instr_bif.cpp b/erts/emulator/beam/jit/arm/instr_bif.cpp
+index 153b5b7d78..cdbff1ab61 100644
+--- a/erts/emulator/beam/jit/arm/instr_bif.cpp
++++ b/erts/emulator/beam/jit/arm/instr_bif.cpp
+@@ -833,7 +833,7 @@ void BeamModuleAssembler::emit_call_bif_mfa(const ArgAtom &M,
+             e->info.mfa.module,
+             e->info.mfa.function,
+             A.get());
+-    a.mov(ARG4, imm(func));
++    mov_ptr(ARG4, (const void *)func);
+ 
+     a.b(resolve_fragment(ga->get_call_bif_shared(), disp128MB));
+ }
+diff --git a/erts/emulator/beam/jit/arm/instr_common.cpp b/erts/emulator/beam/jit/arm/instr_common.cpp
+index 717a1562de..8ad93aeed6 100644
+--- a/erts/emulator/beam/jit/arm/instr_common.cpp
++++ b/erts/emulator/beam/jit/arm/instr_common.cpp
+@@ -3130,9 +3130,9 @@ void BeamModuleAssembler::emit_i_perf_counter() {
+ 
+     /* Call the function pointer used by erts_sys_perf_counter */
+ #ifdef WIN32
+-    mov_imm(TMP1, erts_sys_time_data__.r.o.sys_hrtime);
++    mov_ptr(TMP1, (const void *)erts_sys_time_data__.r.o.sys_hrtime);
+ #else
+-    mov_imm(TMP1, erts_sys_time_data__.r.o.perf_counter);
++    mov_ptr(TMP1, (const void *)erts_sys_time_data__.r.o.perf_counter);
+ #endif
+     dynamic_runtime_call<0>(TMP1);
+ 
+diff --git a/erts/emulator/beam/jit/asm_load.c b/erts/emulator/beam/jit/asm_load.c
+index 693964371e..8ce7eb27c3 100644
+--- a/erts/emulator/beam/jit/asm_load.c
++++ b/erts/emulator/beam/jit/asm_load.c
+@@ -35,6 +35,16 @@
+ #include "erl_record.h"
+ 
+ #include "beam_asm.h"
++#include "beam_jitc.hpp"
++#include "erl_aot.h"
++
++#ifdef ERTS_JITC
++#    define BA_CALL(stp, name, ...)                                            \
++        ((stp)->jitc ? beamjitc_##name((stp)->jitc, ##__VA_ARGS__)             \
++                     : beamasm_##name((stp)->ba, ##__VA_ARGS__))
++#else
++#    define BA_CALL(stp, name, ...) beamasm_##name((stp)->ba, ##__VA_ARGS__)
++#endif
+ 
+ #ifdef ADDRESS_SANITIZER
+ #    include <sanitizer/lsan_interface.h>
+@@ -48,10 +58,19 @@ int beam_load_prepare_emit(LoaderState *stp) {
+     BeamCodeHeader *hdr;
+     int i;
+ 
+-    stp->ba = beamasm_new_assembler(stp->module,
+-                                    stp->beam.code.label_count,
+-                                    stp->beam.code.function_count,
+-                                    &stp->beam);
++    stp->jitc_dyn_base = stp->beam.dynamic_literals.count;
++    stp->jitc = NULL;
++#ifdef ERTS_JITC
++    stp->jitc = beamjitc_new(stp->module, &stp->beam);
++#endif
++    if (stp->jitc) {
++        stp->ba = NULL;
++    } else {
++        stp->ba = beamasm_new_assembler(stp->module,
++                                        stp->beam.code.label_count,
++                                        stp->beam.code.function_count,
++                                        &stp->beam);
++    }
+ 
+     /* Initialize code header */
+     stp->codev_size = stp->beam.code.function_count + 1;
+@@ -212,6 +231,46 @@ static void init_label(Label *lp) {
+     lp->lambda_index = INVALID_LAMBDA_INDEX;
+ }
+ 
++#ifdef ERTS_JITC
++int beam_load_jitc_restore(LoaderState *stp) {
++    BeamJitcRestoreInfo r;
++    int has_nifs = 0;
++    byte *are_nifs;
++    int bytes = stp->beam.code.function_count * sizeof(byte);
++
++    are_nifs = erts_alloc(ERTS_ALC_T_PREPARED_CODE, bytes ? bytes : 1);
++    sys_memzero(are_nifs, bytes);
++
++    ERTS_CT_ASSERT(sizeof(LineInstr) == sizeof(int[2]));
++
++    r.beam = &stp->beam;
++    r.current_li = &stp->current_li;
++    r.line_instr = (int (*)[2])stp->line_instr;
++    r.func_line = stp->func_line;
++    r.are_nifs = are_nifs;
++    r.has_nifs = &has_nifs;
++    r.function_number = &stp->function_number;
++    r.lambda_literals = stp->lambda_literals;
++
++    if (!beamjitc_restore_loader_state(stp->jitc, &r)) {
++        erts_free(ERTS_ALC_T_PREPARED_CODE, are_nifs);
++        return 0;
++    }
++
++    if (has_nifs) {
++        stp->load_hdr->are_nifs = are_nifs;
++    } else {
++        erts_free(ERTS_ALC_T_PREPARED_CODE, are_nifs);
++    }
++
++    stp->function = THE_NON_VALUE;
++    stp->genop = NULL;
++    stp->specific_op = -1;
++
++    return 1;
++}
++#endif
++
+ void beam_load_prepared_free(Binary *magic) {
+     beam_load_prepared_dtor(magic);
+     erts_bin_release(magic);
+@@ -301,6 +360,13 @@ int beam_load_prepared_dtor(Binary *magic) {
+         stp->ba = NULL;
+     }
+ 
++#ifdef ERTS_JITC
++    if (stp->jitc) {
++        beamjitc_delete(stp->jitc);
++        stp->jitc = NULL;
++    }
++#endif
++
+     if (stp->executable_region) {
+         ASSERT(stp->writable_region != NULL);
+ 
+@@ -343,7 +409,7 @@ static int add_line_entry(LoaderState *stp,
+     is_duplicate = li && (stp->line_instr[li - 1].loc == item);
+ 
+     if (insert_duplicates || !is_duplicate) {
+-        stp->line_instr[li].pos = beamasm_get_offset(stp->ba);
++        stp->line_instr[li].pos = BA_CALL(stp, get_offset);
+         stp->line_instr[li].loc = item;
+         stp->current_li++;
+     }
+@@ -817,7 +883,7 @@ static const BeamCodeLineTab *finish_line_table(LoaderState *stp,
+         return NULL;
+     }
+ 
+-    line_tab_ro = (const BeamCodeLineTab *)beamasm_get_rodata(stp->ba, "line");
++    line_tab_ro = (const BeamCodeLineTab *)BA_CALL(stp, get_rodata, "line");
+     line_items_ro = (const void **)&line_tab_ro->func_tab[ftab_size + 1];
+     fname_base_ro = (Eterm *)&line_items_ro[num_instrs + 1];
+     locp_base_ro = &fname_base_ro[stp->beam.lines.name_count];
+@@ -906,7 +972,7 @@ static const BeamDebugTab *finish_debug_table(LoaderState *stp,
+         return NULL;
+     }
+ 
+-    debug_tab_ro = (const BeamDebugTab *)beamasm_get_rodata(stp->ba, "debug");
++    debug_tab_ro = (const BeamDebugTab *)BA_CALL(stp, get_rodata, "debug");
+     debug_tab_rw_base = get_writable_ptr(stp->executable_region,
+                                          stp->writable_region,
+                                          debug_tab_ro);
+@@ -953,6 +1019,12 @@ int beam_load_finish_emit(LoaderState *stp) {
+ 
+     ret = 0;
+ 
++#ifdef ERTS_JITC
++    if (stp->jitc) {
++        goto codegen;
++    }
++#endif
++
+     if (stp->line_instr != 0) {
+         Uint line_size = offsetof(BeamCodeLineTab, func_tab);
+ 
+@@ -1001,6 +1073,7 @@ int beam_load_finish_emit(LoaderState *stp) {
+                          (const char *)stp->beam.checksum,
+                          sizeof(stp->beam.checksum));
+ 
++codegen:
+     /* Transfer ownership of the coverage tables to the prepared code. */
+     stp->load_hdr->coverage = stp->coverage;
+     stp->load_hdr->line_coverage_valid = stp->line_coverage_valid;
+@@ -1010,16 +1083,17 @@ int beam_load_finish_emit(LoaderState *stp) {
+     stp->loc_index_to_cover_id = NULL;
+ 
+     /* Move the code to its final location. */
+-    beamasm_codegen(stp->ba,
+-                    &stp->executable_region,
+-                    &stp->writable_region,
+-                    stp->load_hdr,
+-                    &code_hdr_ro,
+-                    &code_hdr_rw);
+-
+-    stp->on_load = beamasm_get_on_load(stp->ba);
+-    module_base = beamasm_get_base(stp->ba);
+-    module_size = beamasm_get_offset(stp->ba);
++    BA_CALL(stp,
++            codegen,
++            &stp->executable_region,
++            &stp->writable_region,
++            stp->load_hdr,
++            &code_hdr_ro,
++            &code_hdr_rw);
++
++    stp->on_load = BA_CALL(stp, get_on_load);
++    module_base = BA_CALL(stp, get_base);
++    module_size = BA_CALL(stp, get_offset);
+ 
+     /* Save the updated code pointer and code size. */
+     stp->code_hdr = code_hdr_ro;
+@@ -1053,12 +1127,12 @@ int beam_load_finish_emit(LoaderState *stp) {
+          * more like string patching. */
+         for (i = 0; i < stp->beam.static_literals.count; i++) {
+             Eterm lit = beamfile_get_literal(&stp->beam, i);
+-            beamasm_patch_literal(stp->ba, stp->writable_region, i, lit);
++            BA_CALL(stp, patch_literal, stp->writable_region, i, lit);
+         }
+ 
+         for (i = 0; i < stp->beam.dynamic_literals.count; i++) {
+             Eterm lit = beamfile_get_literal(&stp->beam, ~i);
+-            beamasm_patch_literal(stp->ba, stp->writable_region, ~i, lit);
++            BA_CALL(stp, patch_literal, stp->writable_region, ~i, lit);
+         }
+ 
+         literal_area->off_heap = code_off_heap.first;
+@@ -1078,7 +1152,7 @@ int beam_load_finish_emit(LoaderState *stp) {
+     code_hdr_rw->debug = finish_debug_table(stp, module_base, module_size);
+ 
+     if (stp->beam.attributes.size) {
+-        const byte *attr = beamasm_get_rodata(stp->ba, "attr");
++        const byte *attr = BA_CALL(stp, get_rodata, "attr");
+ 
+         code_hdr_rw->attr_ptr = attr;
+         code_hdr_rw->attr_size = stp->beam.attributes.size;
+@@ -1094,7 +1168,7 @@ int beam_load_finish_emit(LoaderState *stp) {
+     }
+ 
+     if (stp->beam.compile_info.size) {
+-        const byte *compile_info = beamasm_get_rodata(stp->ba, "compile");
++        const byte *compile_info = BA_CALL(stp, get_rodata, "compile");
+ 
+         code_hdr_rw->compile_ptr = compile_info;
+         code_hdr_rw->compile_size = stp->beam.compile_info.size;
+@@ -1111,17 +1185,39 @@ int beam_load_finish_emit(LoaderState *stp) {
+     }
+ 
+     {
+-        const byte *md5_sum = beamasm_get_rodata(stp->ba, "md5");
++        const byte *md5_sum = BA_CALL(stp, get_rodata, "md5");
+         code_hdr_rw->md5_ptr = md5_sum;
+     }
+ 
+     /* Patch all instructions that refer to the string table. */
+     if (stp->beam.strings.size) {
+-        const byte *string_table = beamasm_get_rodata(stp->ba, "str");
+-        beamasm_patch_strings(stp->ba, stp->writable_region, string_table);
++        const byte *string_table = BA_CALL(stp, get_rodata, "str");
++        BA_CALL(stp, patch_strings, stp->writable_region, string_table);
+     }
+ 
+     ret = 1;
++
++#ifdef ERTS_JITC
++    if (erts_aot_recording && stp->ba) {
++        BeamJitcRecordInfo info;
++
++        info.module = stp->module;
++        info.beam = &stp->beam;
++        info.src_code = stp->src_code;
++        info.src_size = stp->src_size;
++        info.current_li = stp->current_li;
++        info.line_instr = (const int (*)[2])stp->line_instr;
++        info.func_line = stp->func_line;
++        info.are_nifs = stp->load_hdr->are_nifs;
++        info.function_number = stp->function_number;
++        info.lambda_literals = stp->lambda_literals;
++        info.dyn_base = stp->jitc_dyn_base;
++
++        ERTS_CT_ASSERT(sizeof(LineInstr) == sizeof(int[2]));
++        beamjitc_record_module(stp->ba, &info);
++    }
++#endif
++
+ load_error:
+ 
+     /* Some platforms use per-thread global permissions where a thread can
+@@ -1146,7 +1242,7 @@ void beam_load_finalize_code(LoaderState *stp,
+     ERTS_LC_ASSERT(erts_initialized == 0 || erts_has_code_load_permission() ||
+                    erts_thr_progress_is_blocking());
+ 
+-    code_size = beamasm_get_header(stp->ba, &stp->code_hdr);
++    code_size = BA_CALL(stp, get_header, &stp->code_hdr);
+     erts_total_code_size += code_size;
+ 
+     inst_p->executable_region = stp->executable_region;
+@@ -1172,7 +1268,7 @@ void beam_load_finalize_code(LoaderState *stp,
+     erts_update_ranges(inst_p->code_hdr, code_size);
+ 
+     /* Allocate catch indices and fix up all catch_yf instructions. */
+-    inst_p->catches = beamasm_patch_catches(stp->ba, stp->writable_region);
++    inst_p->catches = BA_CALL(stp, patch_catches, stp->writable_region);
+ 
+     /* Exported functions */
+     staging_ix = erts_staging_code_ix();
+@@ -1182,7 +1278,7 @@ void beam_load_finalize_code(LoaderState *stp,
+         ErtsCodePtr address;
+         Export *ep;
+ 
+-        address = beamasm_get_code(stp->ba, entry->label);
++        address = BA_CALL(stp, get_code, entry->label);
+         ep = erts_export_put(stp->module, entry->function, entry->arity);
+ 
+         if (stp->on_load) {
+@@ -1202,7 +1298,7 @@ void beam_load_finalize_code(LoaderState *stp,
+         const Export *import;
+ 
+         import = erts_export_put(entry->module, entry->function, entry->arity);
+-        beamasm_patch_import(stp->ba, stp->writable_region, i, import);
++        BA_CALL(stp, patch_import, stp->writable_region, i, import);
+     }
+ 
+     /* Patch fun creation. */
+@@ -1237,9 +1333,9 @@ void beam_load_finalize_code(LoaderState *stp,
+ 
+             erts_set_fun_code(fun_entry,
+                               staging_ix,
+-                              beamasm_get_lambda(stp->ba, i));
++                              BA_CALL(stp, get_lambda, i));
+ 
+-            beamasm_patch_lambda(stp->ba, stp->writable_region, i, fun_entry);
++            BA_CALL(stp, patch_lambda, stp->writable_region, i, fun_entry);
+         }
+     }
+ 
+@@ -1260,7 +1356,7 @@ void beam_load_finalize_code(LoaderState *stp,
+     }
+ 
+     /* Register debug / profiling info with external tools. */
+-    inst_p->metadata = beamasm_register_metadata(stp->ba, stp->code_hdr);
++    inst_p->metadata = BA_CALL(stp, register_metadata, stp->code_hdr);
+ 
+     erts_seal_module(inst_p);
+ 
+diff --git a/erts/emulator/beam/jit/beam_jit_common.cpp b/erts/emulator/beam/jit/beam_jit_common.cpp
+index cfa232c5f7..c9ff4cc424 100644
+--- a/erts/emulator/beam/jit/beam_jit_common.cpp
++++ b/erts/emulator/beam/jit/beam_jit_common.cpp
+@@ -127,6 +127,8 @@ void BeamAssemblerCommon::codegen(JitAllocator *allocator,
+ 
+     VirtMem::protect_jit_memory(VirtMem::ProtectJitAccess::kReadWrite);
+ 
++    jitc_pre_relocate();
++
+     code.relocate_to_base((uint64_t)*executable_ptr);
+     code.copy_flattened_data(*writable_ptr,
+                              code.code_size(),
+diff --git a/erts/emulator/beam/jit/beam_jit_common.hpp b/erts/emulator/beam/jit/beam_jit_common.hpp
+index 9a7100192d..2a5e670722 100644
+--- a/erts/emulator/beam/jit/beam_jit_common.hpp
++++ b/erts/emulator/beam/jit/beam_jit_common.hpp
+@@ -49,6 +49,7 @@ extern "C"
+ #undef min
+ #undef max
+ 
++#include "beam_jitc.hpp"
+ #include "beam_jit_args.hpp"
+ #include "beam_jit_types.hpp"
+ #include "beam_jit_register_cache.hpp"
+@@ -91,6 +92,9 @@ protected:
+                  const void **executable_ptr,
+                  void **writable_ptr);
+ 
++    virtual void jitc_pre_relocate() {
++    }
++
+     void comment(const char *format) {
+         if (logger.file()) {
+             assembler.commentf("# %s", format);
+@@ -119,6 +123,20 @@ protected:
+     void setLogger(FILE *log);
+ 
+ public:
++#ifdef ERTS_JITC
++    struct JitcReloc {
++        uint8_t type;
++        uint8_t kind; /* of the target, see beam_jitc.cpp */
++        uint32_t off;
++        uint32_t end;
++        uint64_t value;
++        std::string name;
++    };
++    std::vector<JitcReloc> jitc_relocs;
++    std::vector<byte> jitc_snapshot;
++    uint32_t jitc_addrtab_off = 0xFFFFFFFFu;
++#endif
++
+     void embed_rodata(const char *labelName, const char *buff, size_t size);
+     void embed_bss(const char *labelName, size_t size);
+     void embed_zeros(size_t size);
+diff --git a/erts/emulator/beam/jit/beam_jit_main.cpp b/erts/emulator/beam/jit/beam_jit_main.cpp
+index 73bc507c10..65cbf48be4 100644
+--- a/erts/emulator/beam/jit/beam_jit_main.cpp
++++ b/erts/emulator/beam/jit/beam_jit_main.cpp
+@@ -406,6 +406,14 @@ bool BeamAssemblerCommon::hasCpuFeature(uint32_t featureId) {
+     return cpuinfo.has_feature(featureId);
+ }
+ 
++JitAllocator *beamasm_jit_allocator(void) {
++    return jit_allocator;
++}
++
++BeamGlobalAssembler *beamasm_global_assembler(void) {
++    return bga;
++}
++
+ void init_emulator(void) {
+     install_bifs();
+ }
+diff --git a/erts/emulator/beam/jit/beam_jitc.cpp b/erts/emulator/beam/jit/beam_jitc.cpp
+new file mode 100644
+index 0000000000..f0cd81d8f5
+--- /dev/null
++++ b/erts/emulator/beam/jit/beam_jitc.cpp
+@@ -0,0 +1,1586 @@
++/*
++ * %CopyrightBegin%
++ *
++ * SPDX-License-Identifier: Apache-2.0
++ *
++ * Copyright Ericsson AB 2026. All Rights Reserved.
++ *
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ *
++ * %CopyrightEnd%
++ */
++
++
++#include <cstring>
++#include <mutex>
++#include <unordered_map>
++#include <string>
++#include <vector>
++
++#include "beam_asm.hpp"
++#include "beam_jitc.hpp"
++
++#ifdef ERTS_JITC
++
++extern "C"
++{
++#include "beam_catches.h"
++#include "atom.h"
++#include "erl_aot.h"
++#include "external.h"
++#include "erl_message.h"
++#include <dlfcn.h>
++}
++
++static std::string getAtomName(Eterm atom) {
++    char buf[MAX_ATOM_SZ_LIMIT];
++    int n = erts_snprintf(buf, sizeof(buf), "%T", atom);
++    return std::string(buf, n);
++}
++
++/* Provided by beam_jit_main.cpp */
++JitAllocator *beamasm_jit_allocator(void);
++BeamGlobalAssembler *beamasm_global_assembler(void);
++
++
++#define JITC_MAGIC "JITCv001"
++
++enum {
++    JITC_PTR_ERTS = 0,     /* value = offset from the executable's base */
++    JITC_PTR_FRAGMENT = 1, /* value = global fragment index */
++    JITC_PTR_DYLIB = 2     /* symbol name */
++};
++
++
++/* ------------------------------------------------------------------------
++ * Helpers
++ * ------------------------------------------------------------------------ */
++
++static const void *erts_image_base(void) {
++    static const void *base = nullptr;
++    if (base == nullptr) {
++        Dl_info info;
++        if (dladdr((void *)&erts_aot_emulator_uuid, &info) == 0) {
++            erts_exit(ERTS_ERROR_EXIT, "jitc: dladdr failed on self\n");
++        }
++        base = info.dli_fbase;
++    }
++    return base;
++}
++
++struct PtrClass {
++    int kind;
++    uint64_t value;
++    std::string name;
++};
++
++static bool classify_ptr(uintptr_t v, PtrClass &out) {
++    BeamGlobalAssembler *bga = beamasm_global_assembler();
++    Dl_info info;
++
++    if (v < 0x10000) {
++        return false;
++    }
++
++    {
++        uintptr_t gbase = (uintptr_t)bga->getBaseAddress();
++        uintptr_t gsize = bga->getCodeSize();
++
++        if (v >= gbase && v < gbase + gsize) {
++            int idx = bga->fragment_index((void (*)(void))v);
++            if (idx < 0) {
++                erts_exit(ERTS_ERROR_EXIT,
++                          "jitc: address %p is inside the global fragments "
++                          "but is not a fragment entry\n",
++                          (void *)v);
++            }
++            out.kind = JITC_PTR_FRAGMENT;
++            out.value = idx;
++            return true;
++        }
++    }
++
++    if (dladdr((void *)v, &info) == 0 || info.dli_fbase == nullptr) {
++        return false;
++    }
++
++    if (info.dli_fbase == erts_image_base()) {
++        out.kind = JITC_PTR_ERTS;
++        out.value = v - (uintptr_t)info.dli_fbase;
++        return true;
++    }
++
++    if (info.dli_sname != nullptr && info.dli_saddr == (void *)v) {
++        out.kind = JITC_PTR_DYLIB;
++        out.value = 0;
++        out.name = info.dli_sname;
++        return true;
++    }
++
++    return false;
++}
++
++static uintptr_t resolve_ptr(int kind, uint64_t value, const char *name) {
++    switch (kind) {
++    case JITC_PTR_ERTS:
++        return (uintptr_t)erts_image_base() + value;
++    case JITC_PTR_FRAGMENT: {
++        void (*p)(void) = beamasm_global_assembler()->fragment_ptr(value);
++        ERTS_ASSERT(p != nullptr);
++        return (uintptr_t)p;
++    }
++    case JITC_PTR_DYLIB: {
++        void *p = dlsym(RTLD_DEFAULT, name);
++        if (p == nullptr) {
++            erts_exit(ERTS_ERROR_EXIT,
++                      "jitc: cannot resolve symbol %s\n",
++                      name);
++        }
++        return (uintptr_t)p;
++    }
++    }
++    ERTS_ASSERT(!"bad pointer kind");
++    return 0;
++}
++
++struct Writer {
++    std::vector<byte> buf;
++
++    void u8(unsigned v) {
++        buf.push_back((byte)v);
++    }
++    void u16(unsigned v) {
++        for (int i = 0; i < 2; i++)
++            buf.push_back((byte)(v >> (8 * i)));
++    }
++    void u32(uint32_t v) {
++        for (int i = 0; i < 4; i++)
++            buf.push_back((byte)(v >> (8 * i)));
++    }
++    void i32(int32_t v) {
++        u32((uint32_t)v);
++    }
++    void u64(uint64_t v) {
++        for (int i = 0; i < 8; i++)
++            buf.push_back((byte)(v >> (8 * i)));
++    }
++    void bytes(const void *p, size_t n) {
++        buf.insert(buf.end(), (const byte *)p, (const byte *)p + n);
++    }
++    void str(const std::string &s) {
++        u16(s.size());
++        bytes(s.data(), s.size());
++    }
++};
++
++struct Reader {
++    const byte *p;
++    const byte *end;
++    bool ok = true;
++
++    Reader(const byte *data, size_t size) : p(data), end(data + size) {
++    }
++
++    bool need(size_t n) {
++        if ((size_t)(end - p) < n) {
++            ok = false;
++            return false;
++        }
++        return true;
++    }
++    unsigned u8() {
++        if (!need(1))
++            return 0;
++        return *p++;
++    }
++    unsigned u16() {
++        if (!need(2))
++            return 0;
++        unsigned v = p[0] | (p[1] << 8);
++        p += 2;
++        return v;
++    }
++    uint32_t u32() {
++        if (!need(4))
++            return 0;
++        uint32_t v;
++        memcpy(&v, p, 4);
++        p += 4;
++        return v;
++    }
++    int32_t i32() {
++        return (int32_t)u32();
++    }
++    uint64_t u64() {
++        if (!need(8))
++            return 0;
++        uint64_t v;
++        memcpy(&v, p, 8);
++        p += 8;
++        return v;
++    }
++    const byte *bytes(size_t n) {
++        if (!need(n))
++            return nullptr;
++        const byte *r = p;
++        p += n;
++        return r;
++    }
++};
++
++static inline uint32_t rd_u32(const byte *p) {
++    uint32_t v;
++    memcpy(&v, p, 4);
++    return v;
++}
++
++static inline uint64_t rd_u64(const byte *p) {
++    uint64_t v;
++    memcpy(&v, p, 8);
++    return v;
++}
++
++/* ------------------------------------------------------------------------
++ * Recording
++ * ------------------------------------------------------------------------ */
++
++static void classify_or_die(Eterm mod,
++                            uintptr_t v,
++                            BeamAssemblerCommon::JitcReloc &r) {
++    PtrClass pc;
++    if (!classify_ptr(v, pc)) {
++        erts_exit(ERTS_ERROR_EXIT,
++                  "jitc: cannot classify pointer %p in module %T\n",
++                  (void *)v,
++                  mod);
++    }
++    r.kind = pc.kind;
++    r.value = pc.value;
++    r.name = pc.name;
++}
++
++/* Captures the code before relocation, with asmjit's relocations. */
++void BeamModuleAssembler::jitc_pre_relocate() {
++    if (!erts_aot_recording) {
++        return;
++    }
++
++    jitc_snapshot.resize(code.code_size());
++    code.copy_flattened_data(jitc_snapshot.data(),
++                             jitc_snapshot.size(),
++                             CopySectionFlags::kPadSectionBuffer);
++
++    if (code.has_address_table_section()) {
++        jitc_addrtab_off = code.address_table_section()->offset();
++    }
++
++    for (const RelocEntry *re : code.reloc_entries()) {
++        Section *src, *dst = nullptr;
++        JitcReloc r;
++        unsigned size = re->format().value_size();
++
++        if (re->reloc_type() == RelocType::kNone) {
++            continue;
++        }
++
++        src = code.section_by_id(re->source_section_id());
++        if (re->target_section_id() != Globals::kInvalidId) {
++            dst = code.section_by_id(re->target_section_id());
++        }
++        r.off = src->offset() + re->source_offset() + re->format().value_offset();
++        r.end = src->offset() + re->source_offset() + re->format().region_size();
++        r.kind = 0;
++
++        switch (re->reloc_type()) {
++        case RelocType::kRelToAbs:
++            if (size != 8 || dst == nullptr) {
++                goto unsupported;
++            }
++            r.type = JITC_R_ABS64_MODULE;
++            r.value = re->payload() + dst->offset();
++            break;
++        case RelocType::kAbsToRel:
++            if (size != 4 || dst != nullptr) {
++                goto unsupported;
++            }
++            r.type = JITC_R_REL32;
++            classify_or_die(mod, (uintptr_t)re->payload(), r);
++            break;
++        case RelocType::kX64AddressEntry:
++            if (size != 4 || dst != nullptr) {
++                goto unsupported;
++            }
++            r.type = JITC_R_ADDRENTRY;
++            classify_or_die(mod, (uintptr_t)re->payload(), r);
++            break;
++        default:
++        unsupported:
++            erts_exit(ERTS_ERROR_EXIT,
++                      "jitc: unsupported asmjit relocation (type %d, size %d) "
++                      "in module %T\n",
++                      (int)re->reloc_type(),
++                      size,
++                      mod);
++        }
++        jitc_relocs.push_back(std::move(r));
++    }
++}
++
++#ifdef __aarch64__
++void BeamModuleAssembler::mov_ptr(a64::Gp to, const void *ptr) {
++    if (!erts_aot_recording) {
++        mov_imm(to, ptr);
++        return;
++    }
++
++    UWord v = (UWord)ptr;
++
++    ASSERT(to.isGpX());
++    jitc_ptr_relocs.push_back({a.offset(), ptr});
++
++    a.movz(to, imm(v & 0xFFFF), imm(0));
++    a.movk(to, imm((v >> 16) & 0xFFFF), imm(16));
++    a.movk(to, imm((v >> 32) & 0xFFFF), imm(32));
++    a.movk(to, imm((v >> 48) & 0xFFFF), imm(48));
++}
++#endif
++
++static void write_patch_list(Writer &w,
++                             CodeHolder &code,
++                             const std::vector<BeamModuleAssemblerCommon::patch>
++                                     &patches) {
++    w.u32(patches.size());
++    for (const auto &p : patches) {
++        size_t off = code.label_offset_from_base(p.where) + p.ptr_offs;
++        w.u32(off);
++        w.u32(p.val_offs);
++    }
++}
++
++static bool covered(const std::vector<BeamAssemblerCommon::JitcReloc> &rs,
++                    uint32_t off) {
++    for (const auto &r : rs) {
++        if (r.off == off) {
++            return true;
++        }
++    }
++    return false;
++}
++
++static void unrelocated(Eterm mod, uint64_t value, size_t off) {
++    Dl_info info;
++    const char *sym = "?";
++    if (dladdr((void *)value, &info) && info.dli_sname) {
++        sym = info.dli_sname;
++    }
++    erts_exit(ERTS_ERROR_EXIT,
++              "jitc: unrelocated address %p (%s) at offset %lu in module %T\n",
++              (void *)value,
++              sym,
++              (unsigned long)off,
++              mod);
++}
++
++/* Every address in the text must have a relocation: on AArch64 movz/movk
++ * sequences must come from mov_ptr(); on x86 the immediates of mov are
++ * collected here. Tagged immediates have their low bits set. */
++static void collect_immediates(Eterm mod,
++                               const std::vector<byte> &snapshot,
++                               size_t text_size,
++                               std::vector<BeamAssemblerCommon::JitcReloc> &rs) {
++    const byte *text = snapshot.data();
++    size_t i;
++    PtrClass pc;
++
++#if defined(__aarch64__)
++    for (i = 0; i + 4 <= text_size; i += 4) {
++        uint32_t w = rd_u32(text + i);
++
++        if ((w & 0xFF800000) == 0xD2800000) {
++            unsigned rd = w & 0x1F;
++            uint64_t value = (uint64_t)((w >> 5) & 0xFFFF)
++                             << (16 * ((w >> 21) & 3));
++            size_t j = i + 4;
++
++            while (j + 4 <= text_size) {
++                uint32_t k = rd_u32(text + j);
++                if ((k & 0xFF800000) != 0xF2800000 || (k & 0x1F) != rd) {
++                    break;
++                }
++                value |= (uint64_t)((k >> 5) & 0xFFFF) << (16 * ((k >> 21) & 3));
++                j += 4;
++            }
++            if (value >= 0x10000 && (value & 3) == 0 &&
++                classify_ptr(value, pc) && !covered(rs, i)) {
++                unrelocated(mod, value, i);
++            }
++        }
++    }
++#elif defined(__x86_64__)
++    for (i = 0; i + 2 <= text_size;) {
++        unsigned rex = (text[i] & 0xF0) == 0x40 ? text[i] : 0;
++        size_t op = rex ? i + 1 : i;
++
++        if (op < text_size && (text[op] & 0xF8) == 0xB8) {
++            /* mov r64, imm64 (REX.W) or mov r32, imm32 */
++            size_t imm = op + 1;
++            unsigned width = (rex & 0x08) ? 8 : 4;
++            uint64_t value;
++
++            if (imm + width <= text_size) {
++                value = width == 8 ? rd_u64(text + imm) : rd_u32(text + imm);
++                if (value >= 0x10000 && (value & 3) == 0 &&
++                    classify_ptr(value, pc)) {
++                    BeamAssemblerCommon::JitcReloc r;
++                    r.type = width == 8 ? JITC_R_ABS64 : JITC_R_ABS32;
++                    r.kind = pc.kind;
++                    r.off = imm;
++                    r.end = imm + width;
++                    r.value = pc.value;
++                    r.name = pc.name;
++                    rs.push_back(std::move(r));
++                    i = imm + width;
++                    continue;
++                }
++            }
++        }
++        i++;
++    }
++#endif
++
++    for (i = 0; i + 8 <= text_size; i += 8) {
++        uint64_t value = rd_u64(text + i);
++
++        if (value >= 0x100000000ULL && value < 0x800000000000ULL &&
++            (value & 3) == 0 && classify_ptr(value, pc) && !covered(rs, i)) {
++            unrelocated(mod, value, i);
++        }
++    }
++}
++
++std::vector<byte> BeamModuleAssembler::jitc_serialize(
++        const BeamJitcRecordInfo *stp) {
++    Writer w;
++    unsigned char uuid[16];
++
++    ERTS_ASSERT(erts_aot_recording && !jitc_snapshot.empty());
++
++    erts_aot_emulator_uuid(uuid);
++
++    w.bytes(JITC_MAGIC, 8);
++    w.bytes(uuid, 16);
++    w.bytes(erts_aot_build_id, 16);
++    w.u32(0); /* flags */
++
++    w.bytes(stp->beam->checksum, 16);
++
++    w.u32(stp->beam->atoms.count);
++    for (Sint32 i = 0; i < stp->beam->atoms.count; i++) {
++        Eterm atom = stp->beam->atoms.entries[i];
++        w.u32(is_atom(atom) ? (uint32_t)atom_val(atom) : 0xFFFFFFFFu);
++    }
++
++    w.u32(jitc_snapshot.size());
++    w.u32(a.offset()); /* module (text) size */
++    w.u32(jitc_addrtab_off);
++    w.u32(code.label_offset_from_base(code_header));
++    w.u32(code.label_offset_from_base(code_end));
++    if (on_load.is_valid()) {
++        w.i32(code.label_offset_from_base(on_load));
++    } else {
++        w.i32(-1);
++    }
++
++    /* BEAM labels */
++    {
++        unsigned n = stp->beam->code.label_count;
++        w.u32(n);
++        for (unsigned i = 0; i < n; i++) {
++            auto it = rawLabels.find(i);
++            if (it == rawLabels.end() || !code.is_label_bound(it->second)) {
++                w.u32(0xFFFFFFFFu);
++            } else {
++                w.u32(code.label_offset_from_base(it->second));
++            }
++        }
++    }
++
++    /* Functions */
++    w.u32(functions.size());
++    for (auto label : functions) {
++        w.u32(label);
++    }
++
++    /* Lambda trampolines */
++    {
++        unsigned n = stp->beam->lambdas.count;
++        w.u32(n);
++        for (unsigned i = 0; i < n; i++) {
++            w.u32(code.label_offset_from_base(lambdas[i].trampoline));
++        }
++    }
++
++    /* Named labels (rodata/bss tables) */
++    {
++        static const char *names[] =
++                {"line", "debug", "str", "attr", "compile", "md5"};
++        std::vector<std::pair<std::string, uint32_t>> named;
++        for (const char *name : names) {
++            Label l = code.label_by_name(name, strlen(name));
++            if (l.is_valid() && code.is_label_bound(l)) {
++                named.push_back({std::string(name),
++                                 (uint32_t)code.label_offset_from_base(l)});
++            }
++        }
++        w.u32(named.size());
++        for (auto &n : named) {
++            w.u8(n.first.size());
++            w.bytes(n.first.data(), n.first.size());
++            w.u32(n.second);
++        }
++    }
++
++    /* Relocations */
++    {
++        std::vector<JitcReloc> rs = jitc_relocs;
++
++#ifdef __aarch64__
++        for (auto &pr : jitc_ptr_relocs) {
++            JitcReloc r;
++            r.type = JITC_R_MOVSEQ;
++            r.off = pr.offset;
++            r.end = pr.offset + 16;
++            classify_or_die(mod, (uintptr_t)pr.target, r);
++            rs.push_back(std::move(r));
++        }
++
++        for (auto &kv : _constants) {
++            const Constant &c = kv.second;
++            uintptr_t v;
++            PtrClass pc;
++
++            if (!c.value.isWord() || !code.is_label_bound(c.anchor)) {
++                continue;
++            }
++            v = c.value.as<ArgWord>().get();
++            if (v < 0x100000000ULL || (v & 3) != 0 || !classify_ptr(v, pc)) {
++                continue;
++            }
++            JitcReloc r;
++            r.type = JITC_R_ABS64;
++            r.off = code.label_offset_from_base(c.anchor);
++            r.end = r.off + 8;
++            r.kind = pc.kind;
++            r.value = pc.value;
++            r.name = pc.name;
++            rs.push_back(std::move(r));
++        }
++#endif
++
++        collect_immediates(mod, jitc_snapshot, a.offset(), rs);
++
++        w.u32(rs.size());
++        for (auto &r : rs) {
++            w.u8(r.type);
++            w.u8(r.kind);
++            w.u32(r.off);
++            w.u32(r.end);
++            w.u64(r.value);
++            w.str(r.name);
++        }
++    }
++
++    /* Loader patches */
++    w.u32(literals.size());
++    for (auto &kv : literals) {
++        w.i32((int32_t)kv.first);
++        write_patch_list(w, code, kv.second.patches);
++    }
++
++    w.u32(imports.size());
++    for (auto &kv : imports) {
++        w.u32(kv.first);
++        write_patch_list(w, code, kv.second.patches);
++    }
++
++    w.u32(lambdas.size());
++    for (auto &kv : lambdas) {
++        w.u32(kv.first);
++        write_patch_list(w, code, kv.second.patches);
++    }
++
++    write_patch_list(w, code, strings);
++
++    w.u32(catches.size());
++    for (auto &c : catches) {
++        w.u32(code.label_offset_from_base(c.patch.where) + c.patch.ptr_offs);
++        w.u32(code.label_offset_from_base(c.handler));
++    }
++
++    /* Loader state gathered while emitting instructions. */
++    w.u32(stp->current_li);
++    for (unsigned i = 0; i < stp->current_li; i++) {
++        w.i32(stp->line_instr[i][0]);
++        w.i32(stp->line_instr[i][1]);
++    }
++
++    if (stp->func_line) {
++        w.u32(stp->beam->code.function_count);
++        for (int i = 0; i < stp->beam->code.function_count; i++) {
++            w.u32(stp->func_line[i]);
++        }
++    } else {
++        w.u32(0);
++    }
++
++    if (stp->are_nifs) {
++        w.u8(1);
++        w.u32(stp->beam->code.function_count);
++        w.bytes(stp->are_nifs, stp->beam->code.function_count);
++    } else {
++        w.u8(0);
++    }
++
++    w.u32(stp->beam->debug.item_count);
++    for (Uint i = 0; i < stp->beam->debug.item_count; i++) {
++        w.i32(stp->beam->debug.items[i].location_index);
++    }
++
++    w.u32(stp->function_number);
++
++    /* Dynamic literals: lambda placeholders by index, the rest as ext terms */
++    {
++        const BeamFile_LiteralTable *dyn = &stp->beam->dynamic_literals;
++
++        w.u32(stp->dyn_base);
++        w.u32(dyn->count - stp->dyn_base);
++        for (Sint32 i = stp->dyn_base; i < dyn->count; i++) {
++            Eterm term = dyn->entries[i].value;
++            int lambda = -1;
++
++            for (Sint32 j = 0; j < stp->beam->lambdas.count; j++) {
++                if (stp->lambda_literals[j] == ~(SWord)i) {
++                    lambda = j;
++                    break;
++                }
++            }
++
++            if (lambda >= 0) {
++                w.u8(1);
++                w.u32(lambda);
++            } else {
++                Uint size;
++                std::vector<byte> ext;
++                byte *p;
++
++                if (erts_encode_ext_size(term, &size) != ERTS_EXT_SZ_OK) {
++                    erts_exit(ERTS_ERROR_EXIT,
++                              "jitc: cannot encode dynamic literal %T in %T\n",
++                              term,
++                              mod);
++                }
++                ext.resize(size);
++                p = ext.data();
++                erts_encode_ext(term, &p);
++
++                w.u8(0);
++                w.u32(p - ext.data());
++                w.bytes(ext.data(), p - ext.data());
++            }
++        }
++    }
++
++    /* Code */
++    w.bytes(jitc_snapshot.data(), jitc_snapshot.size());
++
++    return std::move(w.buf);
++}
++
++struct RecordedModule {
++    std::string name;
++    std::vector<byte> data;
++};
++
++static std::vector<RecordedModule> recorded;
++static std::mutex recorded_mutex;
++
++static inline uint32_t be32(const byte *p) {
++    return ((uint32_t)p[0] << 24) | ((uint32_t)p[1] << 16) |
++           ((uint32_t)p[2] << 8) | p[3];
++}
++
++static void put_be32(byte *p, uint32_t v) {
++    p[0] = v >> 24;
++    p[1] = v >> 16;
++    p[2] = v >> 8;
++    p[3] = v;
++}
++
++int beamjitc_record_module(void *instance, const BeamJitcRecordInfo *stp) {
++    BeamModuleAssembler *ba = static_cast<BeamModuleAssembler *>(instance);
++    std::vector<byte> chunk = ba->jitc_serialize(stp);
++    const byte *src = stp->src_code;
++    size_t src_size = stp->src_size;
++    RecordedModule rec;
++    size_t form_end, padded;
++
++    if (src_size < 12 || memcmp(src, "FOR1", 4) != 0 ||
++        memcmp(src + 8, "BEAM", 4) != 0) {
++        erts_exit(ERTS_ERROR_EXIT,
++                  "jitc: module %T is not a plain FOR1/BEAM file\n",
++                  stp->module);
++    }
++
++    form_end = 8 + be32(src + 4);
++    if (form_end > src_size) {
++        form_end = src_size;
++    }
++
++    /* The chunks of the file, less any JITC chunk it already has */
++    rec.data.assign(src, src + 12);
++    for (size_t pos = 12; pos + 8 <= form_end;) {
++        size_t size = be32(src + pos + 4);
++        size_t next = pos + 8 + ((size + 3) & ~(size_t)3);
++        if (next > form_end) {
++            next = form_end;
++        }
++        if (memcmp(src + pos, "JITC", 4) != 0) {
++            rec.data.insert(rec.data.end(), src + pos, src + next);
++        }
++        pos = next;
++    }
++    while (rec.data.size() % 4 != 0) {
++        rec.data.push_back(0);
++    }
++
++    rec.data.insert(rec.data.end(), {'J', 'I', 'T', 'C'});
++    {
++        byte sz[4];
++        put_be32(sz, chunk.size());
++        rec.data.insert(rec.data.end(), sz, sz + 4);
++    }
++    rec.data.insert(rec.data.end(), chunk.begin(), chunk.end());
++    padded = rec.data.size();
++    while (padded % 4 != 0) {
++        rec.data.push_back(0);
++        padded++;
++    }
++
++    put_be32(rec.data.data() + 4, rec.data.size() - 8);
++
++    {
++        Atom *ap = atom_tab(atom_val(stp->module));
++        rec.name.assign((const char *)erts_atom_get_name(ap), ap->len);
++    }
++
++    std::lock_guard<std::mutex> lock(recorded_mutex);
++    recorded.push_back(std::move(rec));
++    return 1;
++}
++
++int beamjitc_recorded_count(void) {
++    std::lock_guard<std::mutex> lock(recorded_mutex);
++    return recorded.size();
++}
++
++int beamjitc_recorded_get(int i,
++                         char *name_out,
++                         size_t name_size,
++                         const byte **data,
++                         size_t *size) {
++    std::lock_guard<std::mutex> lock(recorded_mutex);
++    if (i < 0 || (size_t)i >= recorded.size()) {
++        return 0;
++    }
++    erts_snprintf(name_out, name_size, "%s", recorded[i].name.c_str());
++    *data = recorded[i].data.data();
++    *size = recorded[i].data.size();
++    return 1;
++}
++
++/* ------------------------------------------------------------------------
++ * Replay
++ * ------------------------------------------------------------------------ */
++
++static void check_chunk_identity(Reader &r);
++
++struct JitcPatch {
++    uint32_t offset;
++    uint32_t val_offs;
++};
++
++struct JitcPatchList {
++    int32_t index = 0;
++    const byte *patches = nullptr; /* JitcPatch[count] */
++    uint32_t count = 0;
++};
++
++struct BeamJitcModule {
++    Eterm mod;
++
++    const byte *chunk;
++    size_t chunk_size;
++
++    uint32_t code_size;
++    uint32_t module_size;
++    uint32_t code_header_off;
++    uint32_t code_end_off;
++    int32_t on_load_off;
++
++    uint32_t label_count;
++    const byte *label_offs; /* u32[label_count] */
++    uint32_t function_count;
++    const byte *function_labels; /* u32[function_count] */
++    uint32_t lambda_count;
++    const byte *lambda_offs; /* u32[lambda_count] */
++
++    std::vector<std::pair<std::string, uint32_t>> named;
++
++    uint32_t addrtab_off;
++
++    struct Reloc {
++        uint8_t type;
++        uint8_t kind;
++        uint32_t off;
++        uint32_t end;
++        uint64_t value;
++        std::string name;
++    };
++    std::vector<Reloc> relocs;
++
++    std::vector<JitcPatchList> literal_patches;
++    std::vector<JitcPatchList> dyn_literal_patches;
++    std::vector<JitcPatchList> import_patches;
++    std::vector<JitcPatchList> lambda_patches;
++    JitcPatchList string_patches;
++    uint32_t catch_count;
++    const byte *catches; /* {u32 off, u32 handler_off}[] */
++
++    /* Loader state */
++    uint32_t line_count;
++    const byte *line_instrs; /* {i32 pos, i32 loc}[] */
++    uint32_t func_line_count;
++    const byte *func_lines; /* u32[] */
++    uint8_t has_nifs;
++    uint32_t are_nifs_count;
++    const byte *are_nifs;
++    uint32_t debug_item_count;
++    const byte *debug_locs; /* i32[] */
++    uint32_t function_number;
++
++    uint32_t dyn_base;
++    uint32_t dyn_count;
++    const byte *dyn_data; /* parsed by restore_loader_state */
++    size_t dyn_size;
++
++    const byte *code; /* code_size bytes, valid only until codegen */
++    size_t code_off;  /* offset of the code within the chunk */
++
++    /* The BEAM binary is freed before finish_loading, so the tables are
++     * copied. */
++    std::vector<byte> owned;
++
++    /* After codegen */
++    const char *exec_base = nullptr;
++    char *rw_base = nullptr;
++
++    bool parse(Reader &r, bool with_code);
++};
++
++static bool read_patch_list(Reader &r, JitcPatchList &out, int32_t index) {
++    out.index = index;
++    out.count = r.u32();
++    out.patches = r.bytes((size_t)out.count * 8);
++    return r.ok;
++}
++
++bool BeamJitcModule::parse(Reader &r, bool with_code) {
++    const byte *start = r.p;
++    uint32_t n;
++
++    check_chunk_identity(r);
++
++    (void)r.u32(); /* flags */
++    (void)r.bytes(16); /* checksum */
++
++    {
++        uint32_t n = r.u32();
++        const byte *idx = r.bytes((size_t)n * 4);
++        uint32_t max = 0;
++
++        if (idx == nullptr) {
++            return false;
++        }
++        for (uint32_t i = 0; i < n; i++) {
++            uint32_t v = rd_u32(idx + (size_t)i * 4);
++            if (v != 0xFFFFFFFFu && v > max) {
++                max = v;
++            }
++        }
++        if (max >= erts_aot_atom_count()) {
++            erts_exit(ERTS_ERROR_EXIT,
++                      "jitc: module needs atom %u, beyond the snapshot\n",
++                      max);
++        }
++    }
++
++    code_size = r.u32();
++    module_size = r.u32();
++    addrtab_off = r.u32();
++    code_header_off = r.u32();
++    code_end_off = r.u32();
++    on_load_off = r.i32();
++
++    label_count = r.u32();
++    label_offs = r.bytes((size_t)label_count * 4);
++    function_count = r.u32();
++    function_labels = r.bytes((size_t)function_count * 4);
++    lambda_count = r.u32();
++    lambda_offs = r.bytes((size_t)lambda_count * 4);
++
++    n = r.u32();
++    for (uint32_t i = 0; i < n && r.ok; i++) {
++        unsigned len = r.u8();
++        const byte *s = r.bytes(len);
++        uint32_t off = r.u32();
++        if (s) {
++            named.push_back({std::string((const char *)s, len), off});
++        }
++    }
++
++    n = r.u32();
++    relocs.reserve(n);
++    for (uint32_t i = 0; i < n && r.ok; i++) {
++        Reloc rl;
++        unsigned len;
++        const byte *s;
++
++        rl.type = r.u8();
++        rl.kind = r.u8();
++        rl.off = r.u32();
++        rl.end = r.u32();
++        rl.value = r.u64();
++        len = r.u16();
++        s = r.bytes(len);
++        if (s && len) {
++            rl.name.assign((const char *)s, len);
++        }
++        relocs.push_back(std::move(rl));
++    }
++
++    n = r.u32();
++    for (uint32_t i = 0; i < n && r.ok; i++) {
++        int32_t index = r.i32();
++        JitcPatchList list;
++        read_patch_list(r, list, index);
++        if (index >= 0) {
++            if ((size_t)index >= literal_patches.size()) {
++                literal_patches.resize(index + 1);
++            }
++            literal_patches[index] = list;
++        } else {
++            if ((size_t)~index >= dyn_literal_patches.size()) {
++                dyn_literal_patches.resize(~index + 1);
++            }
++            dyn_literal_patches[~index] = list;
++        }
++    }
++
++    n = r.u32();
++    for (uint32_t i = 0; i < n && r.ok; i++) {
++        uint32_t index = r.u32();
++        JitcPatchList list;
++        read_patch_list(r, list, index);
++        if (index >= import_patches.size()) {
++            import_patches.resize(index + 1);
++        }
++        import_patches[index] = list;
++    }
++
++    n = r.u32();
++    for (uint32_t i = 0; i < n && r.ok; i++) {
++        uint32_t index = r.u32();
++        JitcPatchList list;
++        read_patch_list(r, list, index);
++        if (index >= lambda_patches.size()) {
++            lambda_patches.resize(index + 1);
++        }
++        lambda_patches[index] = list;
++    }
++
++    read_patch_list(r, string_patches, 0);
++
++    catch_count = r.u32();
++    catches = r.bytes((size_t)catch_count * 8);
++
++    line_count = r.u32();
++    line_instrs = r.bytes((size_t)line_count * 8);
++    func_line_count = r.u32();
++    func_lines = r.bytes((size_t)func_line_count * 4);
++    has_nifs = r.u8();
++    if (has_nifs) {
++        are_nifs_count = r.u32();
++        are_nifs = r.bytes(are_nifs_count);
++    } else {
++        are_nifs_count = 0;
++        are_nifs = nullptr;
++    }
++    debug_item_count = r.u32();
++    debug_locs = r.bytes((size_t)debug_item_count * 4);
++    function_number = r.u32();
++
++    dyn_base = r.u32();
++    dyn_count = r.u32();
++    dyn_data = r.p;
++    for (uint32_t i = 0; i < dyn_count && r.ok; i++) {
++        if (r.u8() == 1) {
++            (void)r.u32();
++        } else {
++            uint32_t size = r.u32();
++            (void)r.bytes(size);
++        }
++    }
++    dyn_size = r.p - dyn_data;
++
++    code_off = r.p - start;
++    if (with_code) {
++        code = r.bytes(code_size);
++    } else {
++        code = nullptr;
++    }
++
++    return r.ok;
++}
++
++static void check_chunk_identity(Reader &r) {
++    const byte *magic, *uuid, *id;
++    unsigned char emu_uuid[16];
++
++    ERTS_ASSERT(erts_aot_active);
++
++    magic = r.bytes(8);
++    uuid = r.bytes(16);
++    id = r.bytes(16);
++    if (!r.ok || memcmp(magic, JITC_MAGIC, 8) != 0) {
++        erts_exit(ERTS_ERROR_EXIT, "jitc: corrupt JITC chunk header\n");
++    }
++    erts_aot_emulator_uuid(emu_uuid);
++    if (memcmp(uuid, emu_uuid, 16) != 0) {
++        erts_exit(ERTS_ERROR_EXIT,
++                  "jitc: the module was compiled for another emulator build\n");
++    }
++    if (memcmp(id, erts_aot_build_id, 16) != 0) {
++        erts_exit(ERTS_ERROR_EXIT,
++                  "jitc: the module was compiled for another executable\n");
++    }
++}
++
++int beamjitc_atom_indices(const byte *chunk,
++                         Sint32 size,
++                         const Uint32 **indices,
++                         Uint32 *count,
++                         const byte **checksum) {
++    Reader r(chunk, size);
++    const byte *sum;
++    uint32_t n, max = 0;
++    const byte *idx;
++
++    if (size <= 0 || !erts_aot_active) {
++        return 0; /* No JITC chunk, or not the executable it was made for. */
++    }
++
++    check_chunk_identity(r);
++    (void)r.u32();
++    sum = r.bytes(16);
++    n = r.u32();
++    idx = r.bytes((size_t)n * 4);
++    if (idx == nullptr || n == 0) {
++        erts_exit(ERTS_ERROR_EXIT, "jitc: corrupt atom table in JITC chunk\n");
++    }
++    for (uint32_t i = 0; i < n; i++) {
++        uint32_t v = rd_u32(idx + (size_t)i * 4);
++        if (v != 0xFFFFFFFFu && v > max) {
++            max = v;
++        }
++    }
++    if (max >= erts_aot_atom_count()) {
++        erts_exit(ERTS_ERROR_EXIT,
++                  "jitc: module needs atom %u, beyond the snapshot\n",
++                  max);
++    }
++    *indices = (const Uint32 *)idx;
++    *count = n;
++    *checksum = sum;
++    return 1;
++}
++
++void *beamjitc_new(Eterm module, const BeamFile *beam) {
++    BeamJitcModule *m;
++    Reader r(beam->jitc.data, beam->jitc.size);
++
++    if (beam->jitc.size == 0 || !erts_aot_active) {
++        return nullptr; /* No JITC chunk to use: generate the code. */
++    }
++
++    if (erts_coverage_mode != ERTS_COV_NONE ||
++        (beam->lines.flags & BEAMFILE_FORCE_LINE_COUNTERS)) {
++        erts_exit(ERTS_ERROR_EXIT,
++                  "jitc: coverage is not supported with JITC chunks "
++                  "(module %T)\n",
++                  module);
++    }
++
++    m = new BeamJitcModule();
++    m->mod = module;
++    m->chunk = beam->jitc.data;
++    m->chunk_size = beam->jitc.size;
++
++    if (m->parse(r, true)) {
++        const byte *code = m->code;
++        m->owned.assign(beam->jitc.data, beam->jitc.data + m->code_off);
++        m->named.clear();
++        m->relocs.clear();
++        m->literal_patches.clear();
++        m->dyn_literal_patches.clear();
++        m->import_patches.clear();
++        m->lambda_patches.clear();
++        Reader r2(m->owned.data(), m->owned.size());
++        if (!m->parse(r2, false)) {
++            r.ok = false;
++        }
++        m->code = code;
++    } else {
++        r.ok = false;
++    }
++
++    if (!r.ok || m->label_count != (uint32_t)beam->code.label_count ||
++        m->function_count != (uint32_t)beam->code.function_count ||
++        m->lambda_count != (uint32_t)beam->lambdas.count ||
++        m->debug_item_count != (uint32_t)beam->debug.item_count) {
++        erts_exit(ERTS_ERROR_EXIT,
++                  "jitc: corrupt JITC chunk in module %T (does not match the "
++                  "module's code)\n",
++                  module);
++    }
++
++    return m;
++}
++
++void beamjitc_delete(void *inst) {
++    delete static_cast<BeamJitcModule *>(inst);
++}
++
++int beamjitc_restore_loader_state(void *inst, const BeamJitcRestoreInfo *r) {
++    BeamJitcModule *m = static_cast<BeamJitcModule *>(inst);
++    const BeamFile *beam = r->beam;
++
++    if (m->line_count > 0) {
++        if (r->line_instr == nullptr ||
++            m->line_count > (uint32_t)beam->lines.instruction_count) {
++            return 0;
++        }
++        for (uint32_t i = 0; i < m->line_count; i++) {
++            r->line_instr[i][0] = (int)rd_u32(m->line_instrs + i * 8);
++            r->line_instr[i][1] = (int)rd_u32(m->line_instrs + i * 8 + 4);
++        }
++    }
++    *r->current_li = m->line_count;
++
++    if (m->func_line_count > 0) {
++        if (r->func_line == nullptr ||
++            m->func_line_count != (uint32_t)beam->code.function_count) {
++            return 0;
++        }
++        for (uint32_t i = 0; i < m->func_line_count; i++) {
++            r->func_line[i] = rd_u32(m->func_lines + i * 4);
++        }
++    }
++
++    *r->has_nifs = 0;
++    if (m->has_nifs) {
++        if (m->are_nifs_count != (uint32_t)beam->code.function_count) {
++            return 0;
++        }
++        sys_memcpy(r->are_nifs, m->are_nifs, m->are_nifs_count);
++        *r->has_nifs = 1;
++    }
++
++    for (uint32_t i = 0; i < m->debug_item_count; i++) {
++        r->beam->debug.items[i].location_index =
++                (Sint32)rd_u32(m->debug_locs + i * 4);
++    }
++
++    *r->function_number = m->function_number;
++
++    {
++        Reader dr(m->dyn_data, m->dyn_size);
++
++        if ((uint32_t)beam->dynamic_literals.count != m->dyn_base) {
++            return 0;
++        }
++
++        for (uint32_t i = m->dyn_base; i < m->dyn_base + m->dyn_count; i++) {
++            Sint index;
++
++            if (dr.u8() == 1) {
++                uint32_t lambda = dr.u32();
++                const BeamFile_LambdaEntry *entry;
++                Eterm tmp_hp[ERL_FUN_SIZE];
++                ErlFunThing *funp = (ErlFunThing *)tmp_hp;
++
++                if (lambda >= (uint32_t)beam->lambdas.count) {
++                    return 0;
++                }
++                entry = &beam->lambdas.entries[lambda];
++
++                funp->thing_word = MAKE_FUN_HEADER(entry->arity, 0, 0);
++                funp->entry.exp = nullptr;
++
++                index = beamfile_add_literal(r->beam, make_fun(tmp_hp), 0);
++                r->lambda_literals[lambda] = index;
++            } else {
++                uint32_t size = dr.u32();
++                const byte *ext = dr.bytes(size);
++                const byte *p = ext;
++                ErtsHeapFactory factory;
++                Sint heap_size;
++                Eterm *hp;
++                Eterm term;
++
++                if (ext == nullptr) {
++                    return 0;
++                }
++                heap_size = erts_decode_ext_size(ext, size);
++                if (heap_size < 0) {
++                    return 0;
++                }
++                hp = (Eterm *)erts_alloc(ERTS_ALC_T_TMP,
++                                         (heap_size + 1) * sizeof(Eterm));
++                erts_factory_tmp_init(&factory, hp, heap_size, ERTS_ALC_T_TMP);
++                term = erts_decode_ext(&factory, &p, 0);
++                if (is_non_value(term)) {
++                    erts_factory_undo(&factory);
++                    erts_free(ERTS_ALC_T_TMP, hp);
++                    return 0;
++                }
++                index = beamfile_add_literal(r->beam, term, 0);
++                erts_factory_close(&factory);
++                erts_cleanup_offheap(factory.off_heap);
++                erts_free(ERTS_ALC_T_TMP, hp);
++            }
++
++            if (index != ~(Sint)i) {
++                return 0;
++            }
++        }
++    }
++
++    return 1;
++}
++
++static inline uint32_t label_off(BeamJitcModule *m, unsigned label) {
++    ERTS_ASSERT(label < m->label_count);
++    return rd_u32(m->label_offs + (size_t)label * 4);
++}
++
++static void patch_mov_sequence(char *rw, uint32_t off, uint64_t v) {
++    for (int i = 0; i < 4; i++) {
++        uint32_t w = rd_u32((const byte *)rw + off + i * 4);
++        w = (w & ~(0xFFFFu << 5)) | ((uint32_t)((v >> (16 * i)) & 0xFFFF) << 5);
++        memcpy(rw + off + i * 4, &w, 4);
++    }
++}
++
++static void wr_u32(char *p, uint32_t v) {
++    memcpy(p, &v, 4);
++}
++
++static void wr_u64(char *p, uint64_t v) {
++    memcpy(p, &v, 8);
++}
++
++/* Applies the relocations as asmjit's relocate_to_base() would. */
++static void apply_relocs(BeamJitcModule *m, char *rw, uintptr_t base) {
++    std::unordered_map<uint64_t, uint32_t> slots;
++
++    for (const auto &r : m->relocs) {
++        uint64_t target = 0;
++        int64_t rel;
++
++        if (r.type != JITC_R_ABS64_MODULE && r.type != JITC_R_REL32_MODULE) {
++            target = resolve_ptr(r.kind, r.value, r.name.c_str());
++        }
++
++        switch (r.type) {
++        case JITC_R_ABS64_MODULE:
++            wr_u64(rw + r.off, base + r.value);
++            break;
++        case JITC_R_REL32_MODULE:
++            wr_u32(rw + r.off, (uint32_t)((int64_t)r.value - (int64_t)r.end));
++            break;
++        case JITC_R_REL32:
++        case JITC_R_ADDRENTRY:
++            rel = (int64_t)target - (int64_t)(base + r.end);
++            if (rel != (int32_t)rel) {
++                uint32_t slot;
++                auto it = slots.find(target);
++
++                if (r.type != JITC_R_ADDRENTRY ||
++                    m->addrtab_off == 0xFFFFFFFFu) {
++                    erts_exit(ERTS_ERROR_EXIT,
++                              "jitc: address %p out of range in module %T\n",
++                              (void *)target,
++                              m->mod);
++                }
++                if (it == slots.end()) {
++                    slot = slots.size();
++                    slots[target] = slot;
++                    wr_u64(rw + m->addrtab_off + (size_t)slot * 8, target);
++                } else {
++                    slot = it->second;
++                }
++                /* call/jmp rel32 becomes call/jmp [rip + rel32] */
++                if ((byte)rw[r.off - 1] == 0xE8) {
++                    rw[r.off - 1] = 0x15;
++                } else if ((byte)rw[r.off - 1] == 0xE9) {
++                    rw[r.off - 1] = 0x25;
++                } else {
++                    erts_exit(ERTS_ERROR_EXIT,
++                              "jitc: bad address table instruction in "
++                              "module %T\n",
++                              m->mod);
++                }
++                rw[r.off - 2] = (char)0xFF;
++                rel = (int64_t)(m->addrtab_off + (uint64_t)slot * 8) -
++                      (int64_t)r.end;
++            }
++            wr_u32(rw + r.off, (uint32_t)rel);
++            break;
++        case JITC_R_MOVSEQ:
++            patch_mov_sequence(rw, r.off, target);
++            break;
++        case JITC_R_ABS64:
++            wr_u64(rw + r.off, target);
++            break;
++        case JITC_R_ABS32:
++            if (target > 0xFFFFFFFFu) {
++                erts_exit(ERTS_ERROR_EXIT,
++                          "jitc: address %p does not fit in 32 bits in "
++                          "module %T\n",
++                          (void *)target,
++                          m->mod);
++            }
++            wr_u32(rw + r.off, (uint32_t)target);
++            break;
++        default:
++            erts_exit(ERTS_ERROR_EXIT,
++                      "jitc: bad relocation type %d in module %T\n",
++                      r.type,
++                      m->mod);
++        }
++    }
++}
++
++void beamjitc_codegen(void *inst,
++                     const void **executable_region,
++                     void **writable_region,
++                     const BeamCodeHeader *in_hdr,
++                     const BeamCodeHeader **out_exec_hdr,
++                     BeamCodeHeader **out_rw_hdr) {
++    BeamJitcModule *m = static_cast<BeamJitcModule *>(inst);
++    JitAllocator *allocator = beamasm_jit_allocator();
++    JitAllocator::Span span;
++    BeamCodeHeader *hdr_rw;
++    uintptr_t base;
++    char *rw;
++    Error err;
++
++    Out<JitAllocator::Span> out(span);
++    err = allocator->alloc(out, m->code_size + 16);
++    ERTS_ASSERT(err == Error::kOk && "Failed to allocate module code");
++
++    *executable_region = span.rx();
++    *writable_region = span.rw();
++
++    VirtMem::protect_jit_memory(VirtMem::ProtectJitAccess::kReadWrite);
++
++    m->exec_base = (const char *)span.rx();
++    m->rw_base = rw = (char *)span.rw();
++    base = (uintptr_t)m->exec_base;
++
++    sys_memcpy(rw, m->code, m->code_size);
++    apply_relocs(m, rw, base);
++
++    hdr_rw = (BeamCodeHeader *)(rw + m->code_header_off);
++    sys_memcpy(hdr_rw, in_hdr, sizeof(BeamCodeHeader));
++    hdr_rw->on_load = beamjitc_get_on_load(inst);
++
++    for (uint32_t i = 0; i < m->function_count; i++) {
++        unsigned label = rd_u32(m->function_labels + (size_t)i * 4);
++        hdr_rw->functions[i] =
++                (ErtsCodeInfo *)(m->exec_base + label_off(m, label));
++    }
++    hdr_rw->functions[m->function_count] =
++            (ErtsCodeInfo *)(m->exec_base + m->module_size);
++
++    *out_exec_hdr = (const BeamCodeHeader *)(m->exec_base + m->code_header_off);
++    *out_rw_hdr = hdr_rw;
++}
++
++ErtsCodePtr beamjitc_get_code(void *inst, int label) {
++    BeamJitcModule *m = static_cast<BeamJitcModule *>(inst);
++    uint32_t off = label_off(m, label);
++    ERTS_ASSERT(off != 0xFFFFFFFFu);
++    return (ErtsCodePtr)(m->exec_base + off);
++}
++
++ErtsCodePtr beamjitc_get_lambda(void *inst, int index) {
++    BeamJitcModule *m = static_cast<BeamJitcModule *>(inst);
++    ERTS_ASSERT((uint32_t)index < m->lambda_count);
++    return (ErtsCodePtr)(m->exec_base +
++                         rd_u32(m->lambda_offs + (size_t)index * 4));
++}
++
++const byte *beamjitc_get_rodata(void *inst, const char *label) {
++    BeamJitcModule *m = static_cast<BeamJitcModule *>(inst);
++    for (auto &n : m->named) {
++        if (n.first == label) {
++            return (const byte *)(m->exec_base + n.second);
++        }
++    }
++    erts_exit(ERTS_ERROR_EXIT, "jitc: no rodata label %s in %T\n", label, m->mod);
++    return nullptr;
++}
++
++Uint beamjitc_get_header(void *inst, const BeamCodeHeader **hdr) {
++    BeamJitcModule *m = static_cast<BeamJitcModule *>(inst);
++    *hdr = (const BeamCodeHeader *)(m->exec_base + m->code_header_off);
++    return m->code_size;
++}
++
++char *beamjitc_get_base(void *inst) {
++    BeamJitcModule *m = static_cast<BeamJitcModule *>(inst);
++    return (char *)m->exec_base;
++}
++
++size_t beamjitc_get_offset(void *inst) {
++    BeamJitcModule *m = static_cast<BeamJitcModule *>(inst);
++    return m->module_size;
++}
++
++const ErtsCodeInfo *beamjitc_get_on_load(void *inst) {
++    BeamJitcModule *m = static_cast<BeamJitcModule *>(inst);
++    if (m->on_load_off < 0) {
++        return nullptr;
++    }
++    return erts_code_to_codeinfo((ErtsCodePtr)(m->exec_base + m->on_load_off));
++}
++
++unsigned int beamjitc_patch_catches(void *inst, char *rw_base) {
++    BeamJitcModule *m = static_cast<BeamJitcModule *>(inst);
++    unsigned catch_no = BEAM_CATCHES_NIL;
++
++    for (uint32_t i = 0; i < m->catch_count; i++) {
++        const byte *e = m->catches + (size_t)i * 8;
++        uint32_t off = rd_u32(e);
++        uint32_t handler_off = rd_u32(e + 4);
++        ErtsCodePtr handler = (ErtsCodePtr)(m->exec_base + handler_off);
++        Eterm catch_term;
++        int32_t *where;
++
++        catch_no = beam_catches_cons(handler, catch_no, nullptr);
++        catch_term = make_catch(catch_no);
++        ERTS_ASSERT(catch_term >> 31 == 0);
++
++        where = (int32_t *)&rw_base[off];
++        ASSERT(INT_MAX == *where);
++        *where = catch_term;
++    }
++
++    return catch_no;
++}
++
++static void apply_patches(const JitcPatchList &list, char *rw_base, Eterm value) {
++    for (uint32_t i = 0; i < list.count; i++) {
++        const byte *e = list.patches + (size_t)i * 8;
++        uint32_t off = rd_u32(e);
++        uint32_t val_offs = rd_u32(e + 4);
++        Eterm v = value + val_offs;
++
++        ASSERT(rd_u64((const byte *)rw_base + off) == (Uint64)LLONG_MAX);
++        memcpy(rw_base + off, &v, 8);
++    }
++}
++
++static const JitcPatchList *find_list(const std::vector<JitcPatchList> &lists,
++                                     uint32_t index) {
++    if (index < lists.size() && lists[index].count > 0) {
++        return &lists[index];
++    }
++    return nullptr;
++}
++
++void beamjitc_patch_import(void *inst,
++                          char *rw_base,
++                          int index,
++                          const Export *import) {
++    BeamJitcModule *m = static_cast<BeamJitcModule *>(inst);
++    const JitcPatchList *l = find_list(m->import_patches, index);
++    if (l) {
++        apply_patches(*l, rw_base, (Eterm)import);
++    }
++}
++
++void beamjitc_patch_literal(void *inst, char *rw_base, int index, Eterm lit) {
++    BeamJitcModule *m = static_cast<BeamJitcModule *>(inst);
++    const JitcPatchList *l = index >= 0
++                                    ? find_list(m->literal_patches, index)
++                                    : find_list(m->dyn_literal_patches, ~index);
++    if (l) {
++        apply_patches(*l, rw_base, lit);
++    }
++}
++
++void beamjitc_patch_lambda(void *inst,
++                          char *rw_base,
++                          int index,
++                          const ErlFunEntry *fe) {
++    BeamJitcModule *m = static_cast<BeamJitcModule *>(inst);
++    const JitcPatchList *l = find_list(m->lambda_patches, index);
++    if (l) {
++        apply_patches(*l, rw_base, (Eterm)fe);
++    }
++}
++
++void beamjitc_patch_strings(void *inst, char *rw_base, const byte *strtab) {
++    BeamJitcModule *m = static_cast<BeamJitcModule *>(inst);
++    apply_patches(m->string_patches, rw_base, (Eterm)strtab);
++}
++
++void *beamjitc_register_metadata(void *inst, const BeamCodeHeader *header) {
++    BeamJitcModule *m = static_cast<BeamJitcModule *>(inst);
++    std::vector<AsmRange> ranges;
++    std::string module_name = getAtomName(m->mod);
++
++    (void)header;
++    ranges.push_back({.start = (ErtsCodePtr)m->exec_base,
++                      .stop = (ErtsCodePtr)(m->exec_base + m->code_size),
++                      .name = module_name});
++
++    return beamasm_metadata_insert(module_name,
++                                   (ErtsCodePtr)m->exec_base,
++                                   m->code_size,
++                                   ranges);
++}
++
++#endif /* ERTS_JITC */
+diff --git a/erts/emulator/beam/jit/beam_jitc.hpp b/erts/emulator/beam/jit/beam_jitc.hpp
+new file mode 100644
+index 0000000000..3b3e69ee8a
+--- /dev/null
++++ b/erts/emulator/beam/jit/beam_jitc.hpp
+@@ -0,0 +1,143 @@
++/*
++ * %CopyrightBegin%
++ *
++ * SPDX-License-Identifier: Apache-2.0
++ *
++ * Copyright Ericsson AB 2026. All Rights Reserved.
++ *
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ *
++ * %CopyrightEnd%
++ */
++
++/* JITC chunks: the JIT's code for a module, captured before relocation with
++ * its relocations and loader patches, so that the loader can install it
++ * without the JIT; atoms are not relocated, the executable replays the atom
++ * table instead (erl_aot.c). */
++
++#ifndef __BEAM_JITC_HPP__
++#define __BEAM_JITC_HPP__
++
++#if defined(BEAMASM) && (defined(__aarch64__) || defined(__x86_64__)) &&      \
++        !defined(__WIN32__)
++#    define ERTS_JITC 1
++#endif
++
++#ifdef ERTS_JITC
++
++#ifdef __cplusplus
++extern "C"
++{
++#endif
++
++#ifdef HAVE_CONFIG_H
++#    include "config.h"
++#endif
++
++#include "sys.h"
++#include "erl_vm.h"
++#include "global.h"
++#include "export.h"
++#include "erl_fun.h"
++#include "beam_file.h"
++
++/* Relocations in a chunk; `off` is where the value goes, `end` the end of
++ * the instruction for relative ones. */
++enum {
++    JITC_R_ABS64_MODULE = 0, /* u64: base + value */
++    JITC_R_REL32_MODULE = 1, /* i32: value - end */
++    JITC_R_REL32 = 2,        /* i32: target - (base + end) */
++    JITC_R_ADDRENTRY = 3,    /* as REL32, through the address table if far */
++    JITC_R_MOVSEQ = 4,       /* AArch64 movz/movk sequence: target */
++    JITC_R_ABS64 = 5,        /* u64: target */
++    JITC_R_ABS32 = 6         /* u32: target */
++};
++
++typedef struct BeamJitcRecordInfo_ {
++    Eterm module;
++    const BeamFile *beam;
++    const byte *src_code; /* The BEAM file as given to the loader */
++    Uint src_size;
++    unsigned current_li;
++    const int (*line_instr)[2]; /* {pos, loc} pairs */
++    const unsigned *func_line;  /* function_count entries or NULL */
++    const byte *are_nifs;       /* function_count entries or NULL */
++    unsigned function_number;
++    const SWord *lambda_literals; /* beam->lambdas.count entries */
++    int dyn_base; /* dynamic literals created by beamfile_read() */
++} BeamJitcRecordInfo;
++
++typedef struct BeamJitcRestoreInfo_ {
++    BeamFile *beam;
++    unsigned *current_li;
++    int (*line_instr)[2];   /* capacity: beam->lines.instruction_count */
++    unsigned *func_line;    /* capacity: function_count, or NULL */
++    byte *are_nifs;         /* capacity: function_count; set when has_nifs */
++    int *has_nifs;
++    unsigned *function_number;
++    SWord *lambda_literals; /* beam->lambdas.count entries */
++} BeamJitcRestoreInfo;
++
++int beamjitc_atom_indices(const byte *chunk,
++                          Sint32 size,
++                          const Uint32 **indices,
++                          Uint32 *count,
++                          const byte **checksum);
++
++/* NULL when the chunk is absent or not for this executable */
++void *beamjitc_new(Eterm module, const BeamFile *beam);
++void beamjitc_delete(void *inst);
++int beamjitc_restore_loader_state(void *inst, const BeamJitcRestoreInfo *r);
++void beamjitc_codegen(void *inst,
++                      const void **executable_region,
++                      void **writable_region,
++                      const BeamCodeHeader *in_hdr,
++                      const BeamCodeHeader **out_exec_hdr,
++                      BeamCodeHeader **out_rw_hdr);
++ErtsCodePtr beamjitc_get_code(void *inst, int label);
++ErtsCodePtr beamjitc_get_lambda(void *inst, int index);
++const byte *beamjitc_get_rodata(void *inst, const char *label);
++Uint beamjitc_get_header(void *inst, const BeamCodeHeader **hdr);
++char *beamjitc_get_base(void *inst);
++size_t beamjitc_get_offset(void *inst);
++const ErtsCodeInfo *beamjitc_get_on_load(void *inst);
++unsigned int beamjitc_patch_catches(void *inst, char *rw_base);
++void beamjitc_patch_import(void *inst,
++                           char *rw_base,
++                           int index,
++                           const Export *import);
++void beamjitc_patch_literal(void *inst, char *rw_base, int index, Eterm lit);
++void beamjitc_patch_lambda(void *inst,
++                           char *rw_base,
++                           int index,
++                           const ErlFunEntry *fe);
++void beamjitc_patch_strings(void *inst, char *rw_base, const byte *strtab);
++void *beamjitc_register_metadata(void *inst, const BeamCodeHeader *header);
++
++/* Stores the BEAM file with a JITC chunk added */
++int beamjitc_record_module(void *ba, const BeamJitcRecordInfo *info);
++
++int beamjitc_recorded_count(void);
++int beamjitc_recorded_get(int i,
++                          char *name_out,
++                          size_t name_size,
++                          const byte **data,
++                          size_t *size);
++
++#ifdef __cplusplus
++}
++#endif
++
++#endif /* ERTS_JITC */
++
++#endif
+diff --git a/erts/emulator/beam/jit/load.h b/erts/emulator/beam/jit/load.h
+index dab359763b..77d33794be 100644
+--- a/erts/emulator/beam/jit/load.h
++++ b/erts/emulator/beam/jit/load.h
+@@ -97,6 +97,11 @@ struct LoaderState_ {
+ 
+     void *ba; /* Assembler used to create x86/AArch64 assembly */
+ 
++    void *jitc; /* Used instead of `ba` when the module has a JITC chunk */
++    int jitc_dyn_base;
++    const byte *src_code;
++    Uint src_size;
++
+     const void *executable_region; /* Native module after codegen */
+     void *writable_region; /* Native module after codegen, writable mapping */
+ 
+diff --git a/erts/emulator/beam/jit/x86/beam_asm.hpp b/erts/emulator/beam/jit/x86/beam_asm.hpp
+index b04564d8f1..40784d53cb 100644
+--- a/erts/emulator/beam/jit/x86/beam_asm.hpp
++++ b/erts/emulator/beam/jit/x86/beam_asm.hpp
+@@ -1296,6 +1296,9 @@ public:
+         return code.code_size();
+     }
+ 
++    void jitc_pre_relocate() override;
++    std::vector<byte> jitc_serialize(const struct BeamJitcRecordInfo_ *info);
++
+     void copyCodeHeader(BeamCodeHeader *hdr);
+     BeamCodeHeader *getCodeHeader(void);
+     const ErtsCodeInfo *getOnLoad(void);
+diff --git a/erts/emulator/beam/jit/x86/beam_asm_global.hpp.pl b/erts/emulator/beam/jit/x86/beam_asm_global.hpp.pl
+index 352288986e..cac73e8935 100755
+--- a/erts/emulator/beam/jit/x86/beam_asm_global.hpp.pl
++++ b/erts/emulator/beam/jit/x86/beam_asm_global.hpp.pl
+@@ -209,6 +209,24 @@ public:
+         return ptrs[lbl];
+     }
+ 
++    size_t getCodeSize() {
++        return code.code_size();
++    }
++
++    fptr fragment_ptr(uint64_t index) {
++        auto it = ptrs.find((GlobalLabels)index);
++        return it == ptrs.end() ? nullptr : it->second;
++    }
++
++    int fragment_index(fptr p) {
++        for (const auto &kv : ptrs) {
++            if (kv.second == p) {
++                return (int)kv.first;
++            }
++        }
++        return -1;
++    }
++
+     enum erts_is_line_breakpoint is_line_breakpoint_trampoline(ErtsCodePtr);
+ 
+ 
+diff --git a/erts/etc/common/erlaotc.c b/erts/etc/common/erlaotc.c
+index 0f8f5e69a2..e907a85e0f 100644
+--- a/erts/etc/common/erlaotc.c
++++ b/erts/etc/common/erlaotc.c
+@@ -21,7 +21,8 @@
+  */
+ /*
+  * Purpose: erlaotc - build an executable from a release: the emulator plus
+- * a zip archive of lib/ and releases/.
++ * a zip archive of lib/ and releases/, built twice so that the second one
++ * gets the JITC chunks the first writes with -erlaot:record.
+  */
+ 
+ #include "etc_common.h"
+@@ -29,6 +30,7 @@
+ #include <dirent.h>
+ #include <stdint.h>
+ #include <sys/stat.h>
++#include <sys/wait.h>
+ 
+ #define EMULATOR "beam.smp"
+ #define MAGIC "erlaotc " ERTS_VSN "\n"
+@@ -61,6 +63,13 @@ static entry_t *entries;
+ static int n_entries, max_entries;
+ static uint32_t crc_table[256];
+ 
++static char *tmp_exe;
++static char *record_dir;
++
++static const char *overlay_dir;
++
++static void remove_tree(const char *path);
++
+ static void error(const char *format, ...)
+ {
+     va_list args;
+@@ -69,6 +78,10 @@ static void error(const char *format, ...)
+     vfprintf(stderr, format, args);
+     va_end(args);
+     fprintf(stderr, "\n");
++    if (tmp_exe != NULL)
++        unlink(tmp_exe);
++    if (record_dir != NULL)
++        remove_tree(record_dir);
+     exit(1);
+ }
+ 
+@@ -291,6 +304,17 @@ static void collect(const char *dir, const char *name)
+             free(ename);
+         } else if (S_ISREG(st.st_mode)) {
+             entry_t *e;
++            if (overlay_dir != NULL) {
++                char *opath = join(overlay_dir, ename);
++                struct stat ost;
++                if (stat(opath, &ost) == 0) {
++                    free(path);
++                    path = opath;
++                    st = ost;
++                } else {
++                    free(opath);
++                }
++            }
+             if (st.st_size > 0xffffffffu)
+                 error("%s is too large", path);
+             if (n_entries >= max_entries)
+@@ -308,6 +332,23 @@ static void collect(const char *dir, const char *name)
+     free(names);
+ }
+ 
++static void collect_release(const char *release_path)
++{
++    struct stat st;
++    int i;
++
++    for (i = 0; release_dirs[i] != NULL; i++) {
++        char *dir = join(release_path, release_dirs[i]);
++        if (stat(dir, &st) != 0 || !S_ISDIR(st.st_mode))
++            error("%s is not a release: no %s directory", release_path,
++                  release_dirs[i]);
++        collect(dir, release_dirs[i]);
++        free(dir);
++    }
++    if (n_entries > 0xffff)
++        error("too many files in the release");
++}
++
+ static void put16(FILE *f, unsigned v)
+ {
+     unsigned char b[2] = {v & 0xff, (v >> 8) & 0xff};
+@@ -343,16 +384,14 @@ static void copy_file(FILE *out, const char *path, uint32_t *crc)
+ #define ZIP_TIME 0
+ #define ZIP_DATE 0x21 /* 1980-01-01 */
+ 
+-static void write_executable(const char *out_path, const char *emulator,
++static void write_executable(const char *tmp_path, const char *emulator,
+                              args_t *emu_args, args_t *init_args)
+ {
+-    char *tmp_path = emalloc(strlen(out_path) + 5);
+     FILE *out;
+     long offset;
+     uint32_t cd_offset, cd_size;
+     int i;
+ 
+-    sprintf(tmp_path, "%s.tmp", out_path);
+     out = fopen(tmp_path, "wb");
+     if (out == NULL)
+         error("cannot create %s: %s", tmp_path, strerror(errno));
+@@ -456,9 +495,51 @@ static void write_executable(const char *out_path, const char *emulator,
+         error("cannot chmod %s: %s", tmp_path, strerror(errno));
+     if (fclose(out) != 0)
+         error("cannot write %s: %s", tmp_path, strerror(errno));
+-    if (rename(tmp_path, out_path) != 0)
+-        error("cannot create %s: %s", out_path, strerror(errno));
+-    free(tmp_path);
++}
++
++static void remove_tree(const char *path)
++{
++    DIR *d = opendir(path);
++    struct dirent *ent;
++
++    if (d != NULL) {
++        while ((ent = readdir(d)) != NULL) {
++            char *sub;
++            struct stat st;
++            if (strcmp(ent->d_name, ".") == 0 || strcmp(ent->d_name, "..") == 0)
++                continue;
++            sub = join(path, ent->d_name);
++            if (lstat(sub, &st) == 0 && S_ISDIR(st.st_mode))
++                remove_tree(sub);
++            else
++                unlink(sub);
++            free(sub);
++        }
++        closedir(d);
++    }
++    rmdir(path);
++}
++
++static void record(const char *exe)
++{
++    pid_t pid;
++    int status;
++
++    if (mkdir(record_dir, 0755) != 0)
++        error("cannot create %s: %s", record_dir, strerror(errno));
++    pid = fork();
++    if (pid < 0)
++        error("cannot run %s: %s", exe, strerror(errno));
++    if (pid == 0) {
++        execl(exe, exe, "-erlaot:record", record_dir, (char *)NULL);
++        _exit(127);
++    }
++    while (waitpid(pid, &status, 0) < 0) {
++        if (errno != EINTR)
++            error("cannot run %s: %s", exe, strerror(errno));
++    }
++    if (!WIFEXITED(status) || WEXITSTATUS(status) != 0)
++        error("compiling the code failed");
+ }
+ 
+ static char *bindir(const char *argv0)
+@@ -557,17 +638,29 @@ int main(int argc, char **argv)
+     }
+ 
+     crc_init();
+-    for (i = 0; release_dirs[i] != NULL; i++) {
+-        char *dir = join(release_path, release_dirs[i]);
+-        if (stat(dir, &st) != 0 || !S_ISDIR(st.st_mode))
+-            error("%s is not a release: no %s directory", release_path,
+-                  release_dirs[i]);
+-        collect(dir, release_dirs[i]);
+-        free(dir);
+-    }
+-    if (n_entries > 0xffff)
+-        error("too many files in the release");
++    tmp_exe = emalloc(strlen(out_path) + 8);
++    sprintf(tmp_exe, "%s.tmp", out_path);
++    record_dir = emalloc(strlen(out_path) + 8);
++    sprintf(record_dir, "%s.tmp.d", out_path);
++    remove_tree(record_dir);
++
++    collect_release(release_path);
++    write_executable(tmp_exe, emulator, &emu, &init);
++    record(tmp_exe);
++
++    n_entries = 0;
++    overlay_dir = record_dir;
++    collect_release(release_path);
++    path = join(record_dir, "erts-" ERTS_VSN);
++    if (stat(path, &st) == 0)
++        collect(path, "erts-" ERTS_VSN);
++    else
++        fprintf(stderr, "erlaotc: no ahead-of-time compilation on this "
++                "platform, the code is compiled at run time\n");
++    write_executable(tmp_exe, emulator, &emu, &init);
+ 
+-    write_executable(out_path, emulator, &emu, &init);
++    if (rename(tmp_exe, out_path) != 0)
++        error("cannot create %s: %s", out_path, strerror(errno));
++    remove_tree(record_dir);
+     return 0;
+ }

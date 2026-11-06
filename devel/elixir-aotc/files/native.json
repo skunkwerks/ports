@@ -1,0 +1,7 @@
+{
+  "schema": 1,
+  "nifs": [
+    {"archive": "greet.a", "init": "greet_nif_init"}
+  ],
+  "link_args": []
+}

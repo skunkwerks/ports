@@ -1,0 +1,27 @@
+--- a/erts/emulator/beam/erl_aot.c
++++ b/erts/emulator/beam/erl_aot.c
+@@ -58,6 +58,10 @@ unsigned char erts_aot_build_id[16];
+ #  include <link.h>
+ #  include <elf.h>
+ #endif
++#ifdef __FreeBSD__
++#  include <sys/sysctl.h>
++#  include <sys/user.h>
++#endif
+ 
+ #define MAGIC "erlaotc " ERLANG_VERSION "\n"
+ #define ROOT_VAR "$ROOT"
+@@ -153,6 +157,13 @@ static int resolve_self_path(const char *argv0)
+         return 0;
+     exe_path[n] = '\0';
+     return 1;
++#elif defined(__FreeBSD__)
++    int mib[4] = {CTL_KERN, KERN_PROC, KERN_PROC_PATHNAME, -1};
++    size_t size = sizeof(exe_path);
++    (void)argv0;
++    if (sysctl(mib, 4, exe_path, &size, NULL, 0) != 0)
++        return 0;
++    return size > 0;
+ #else
+     return argv0 != NULL && strchr(argv0, '/') != NULL &&
+            realpath(argv0, exe_path) != NULL;

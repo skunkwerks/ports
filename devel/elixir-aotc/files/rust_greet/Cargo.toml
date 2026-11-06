@@ -1,0 +1,10 @@
+[package]
+name = "rust_greet"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["staticlib"]
+
+[dependencies]
+rustler = { version = "0.39", features = ["staticlib"] }

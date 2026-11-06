@@ -1,0 +1,839 @@
+diff --git a/examples/.gitignore b/examples/.gitignore
+new file mode 100644
+index 0000000000..9eeaec9a67
+--- /dev/null
++++ b/examples/.gitignore
+@@ -0,0 +1,9 @@
++# Executables built from the examples
++/hello
++/req
++/breeze
++/demo_live
++/elixir
++/iex
++/elixiraotc
++erl_crash.dump
+diff --git a/examples/breeze.exs b/examples/breeze.exs
+new file mode 100644
+index 0000000000..dde7f5c531
+--- /dev/null
++++ b/examples/breeze.exs
+@@ -0,0 +1,46 @@
++Mix.install([{:breeze, "~> 0.5.0"}])
++
++defmodule Demo do
++  use Breeze.View
++  import Breeze.Blocks
++
++  def mount(_opts, term) do
++    {:ok,
++     term
++     |> assign(counter: 0)
++     |> put_local_keybindings([
++       {"ArrowUp", "Increment"},
++       {"ArrowDown", "Decrement"}
++     ])}
++  end
++
++  def render(assigns) do
++    ~H"""
++    <box style="grid grid-cols-1 grid-rows-2 width-screen height-screen">
++      <box>
++        <box style="text-5 bold">Counter: {@counter}</box>
++      </box>
++      <box style="height-1 bg-panel overflow-hidden">
++        <.keybinding_bar keybindings={@breeze.keybindings}/>
++      </box>
++    </box>
++    """
++  end
++
++  def handle_event(_, %{"key" => "ArrowUp"}, term),
++    do: {:noreply, assign(term, counter: term.assigns.counter + 1)}
++
++  def handle_event(_, %{"key" => "ArrowDown"}, term),
++    do: {:noreply, assign(term, counter: term.assigns.counter - 1)}
++
++  def handle_event(_, _, term), do: {:noreply, term}
++end
++
++Breeze.Example.run(
++  [
++    view: Demo,
++    global_keybindings: [{"q", "Quit", fn _event, term -> {:stop, term} end}]
++  ],
++  keep_alive: :infinity
++)
++
+diff --git a/examples/demo_live.exs b/examples/demo_live.exs
+new file mode 100755
+index 0000000000..8c76167f80
+--- /dev/null
++++ b/examples/demo_live.exs
+@@ -0,0 +1,29 @@
++#!/usr/bin/env elixir
++Mix.install([
++  {:phoenix_playground, "~> 0.1.8"}
++])
++
++defmodule DemoLive do
++  use Phoenix.LiveView
++
++  def mount(_params, _session, socket) do
++    {:ok, assign(socket, count: 0)}
++  end
++
++  def render(assigns) do
++    ~H"""
++    <span>{@count}</span>
++    <button phx-click="inc">+</button>
++
++    <style type="text/css">
++      body { padding: 1em; }
++    </style>
++    """
++  end
++
++  def handle_event("inc", _params, socket) do
++    {:noreply, assign(socket, count: socket.assigns.count + 1)}
++  end
++end
++
++PhoenixPlayground.start(live: DemoLive, live_reload: false)
+diff --git a/examples/elixir.exs b/examples/elixir.exs
+new file mode 100644
+index 0000000000..ca5d805476
+--- /dev/null
++++ b/examples/elixir.exs
+@@ -0,0 +1,33 @@
++# The `elixir` command; bin/elixir handles --sname/--name/--cookie before
++# the VM starts, here they are applied to the running VM.
++defmodule ElixirCommand do
++  def start_node(argv) do
++    case argv do
++      ["--sname", name | rest] -> start_node(:shortnames, name, rest)
++      ["--name", name | rest] -> start_node(:longnames, name, rest)
++      ["--cookie", cookie | rest] -> :erlang.set_cookie(String.to_atom(cookie)); start_node(rest)
++      ["--erl", _ | _] -> raise ArgumentError, "--erl is not supported by this executable"
++      [_ | rest] -> start_node(rest)
++      [] -> :ok
++    end
++  end
++
++  defp start_node(domain, name, rest) do
++    start_epmd()
++    name = if name == "undefined", do: :undefined, else: String.to_atom(name)
++    {:ok, _} = :net_kernel.start(name, %{name_domain: domain})
++    start_node(rest)
++  end
++
++  defp start_epmd do
++    {:ok, [[bindir]]} = :init.get_argument(:bindir)
++    port = Port.open({:spawn_executable, Path.join(bindir, "epmd")}, [:exit_status, args: ["-daemon"]])
++
++    receive do
++      {^port, {:exit_status, 0}} -> :ok
++    end
++  end
++end
++
++ElixirCommand.start_node(System.argv())
++:elixir.start_cli()
+diff --git a/examples/elixiraotc.exs b/examples/elixiraotc.exs
+new file mode 100755
+index 0000000000..f85f786ac4
+--- /dev/null
++++ b/examples/elixiraotc.exs
+@@ -0,0 +1,596 @@
++#!/usr/bin/env elixir
++defmodule ElixirAotc do
++  @rel_vsn "1.0"
++  @erts_vsn List.to_string(:erlang.system_info(:version))
++
++  def main(argv) do
++    case argv do
++      ["build", file | rest] when binary_part(file, 0, 1) != "-" -> build(file, parse_opts(rest))
++      ["run", file | args] when binary_part(file, 0, 1) != "-" -> run(file, args)
++      _ -> usage()
++    end
++  end
++
++  defp usage do
++    IO.puts(:stderr, """
++    usage: elixiraotc build FILE.exs [--native NATIVE.json] [--native-sdk DIR] [-o EXE] [ERL_ARG]...
++           elixiraotc run FILE.exs [ARG]...
++    """)
++
++    System.halt(2)
++  end
++
++  defp parse_opts(args), do: parse_opts(args, %{erl_args: []})
++  defp parse_opts([], opts), do: opts
++  defp parse_opts(["-o", out | rest], opts), do: parse_opts(rest, Map.put(opts, :out, out))
++  defp parse_opts(["--native", json | rest], opts), do: parse_opts(rest, Map.put(opts, :native, json))
++  defp parse_opts(["--native-sdk", dir | rest], opts), do: parse_opts(rest, Map.put(opts, :native_sdk, dir))
++  defp parse_opts([arg | rest], opts), do: parse_opts(rest, %{opts | erl_args: opts.erl_args ++ [arg]})
++
++  defp run(file, args) do
++    tmp = tmp_dir()
++    exe = Path.join(tmp, Path.rootname(Path.basename(file)))
++    build(file, %{erl_args: [], out: exe, quiet: true})
++    port = Port.open({:spawn_executable, exe}, [:nouse_stdio, :exit_status, args: args])
++
++    receive do
++      {^port, {:exit_status, status}} ->
++        File.rm_rf!(tmp)
++        System.halt(status)
++    end
++  end
++
++  # -s Elixir.Aotc.Runtime script, after the boot script
++  @runtime """
++  defmodule Aotc.Runtime do
++    def script do
++      System.argv(Enum.map(:init.get_plain_arguments(), &IO.chardata_to_string/1))
++      Kernel.CLI.run(fn _ -> Aotc.Main.main() end)
++    end
++  end
++  """
++
++  # Top-level Mix.install/2 calls are resolved at build time and their
++  # dependencies folded into the release, so the resulting executable runs
++  # without fetching them again. The Mix.install call itself is dropped from
++  # Aotc.Main.main/0 at run time. Only a single, literal Mix.install([...])
++  # list is supported.
++  defp build(file, opts) do
++    file = Path.expand(file)
++    out = Map.get(opts, :out, Path.rootname(Path.basename(file)))
++    rel = tmp_dir()
++    native = Map.get(opts, :native)
++    sdk_arg = Map.get(opts, :native_sdk)
++    ebin = Path.join(rel, "lib/aotc_script-#{@rel_vsn}/ebin")
++    File.mkdir_p!(ebin)
++    forms = script_forms(file)
++
++    # Resolve Mix.install/2 dependencies at build time and embed them, before
++    # compiling the script so the referenced modules are on the code path.
++    mix_install_apps = resolve_mix_install(forms)
++
++    script_beams = compile_script(forms, file, ebin)
++    write_app(ebin, :aotc_script, Enum.map(script_beams, &elem(&1, 0)), [:kernel, :stdlib, :elixir, :aotc_runtime])
++
++    runtime_ebin = Path.join(rel, "lib/aotc_runtime-#{@rel_vsn}/ebin")
++    File.mkdir_p!(runtime_ebin)
++    runtime_beams = Code.compile_string(@runtime, "elixiraotc.exs")
++    write_modules(runtime_beams, runtime_ebin)
++    write_app(runtime_ebin, :aotc_runtime, Enum.map(runtime_beams, &elem(&1, 0)), [:kernel, :stdlib, :elixir])
++
++    lib_dirs = code_path_apps() |> Map.put(:aotc_script, ebin) |> Map.put(:aotc_runtime, runtime_ebin)
++    lib_dirs = if Map.has_key?(lib_dirs, :hex), do: lib_dirs, else: Map.put(lib_dirs, :hex, hex_archive_ebin())
++    referenced = referenced_apps(script_beams ++ runtime_beams, lib_dirs)
++    started = resolve_apps([:aotc_script, :elixir, :logger] ++ mix_install_apps, lib_dirs)
++    # The crypto/SSL/HTTP stack must always ship. Mix.install and
++    # Mix.Utils.detect_user_id! call :crypto.strong_rand_bytes/1 dynamically,
++    # and dependency fetches over HTTPS drive :inets/:ssl/:public_key/:asn1 the
++    # same way. None of these are visible in the script's imports chunk, and
++    # several are only listed in runtime_dependencies (not applications), so
++    # resolve_apps would not bring them transitively. Listing them here makes
++    # :httpc, :ssl and :public_key available to generated programs too.
++    all =
++      resolve_apps(
++        [:aotc_script, :kernel, :stdlib, :elixir, :logger, :crypto, :ssl, :public_key, :asn1, :inets] ++
++          referenced ++ mix_install_apps,
++        lib_dirs
++      )
++    started_names = Enum.map(started, &elem(&1, 0))
++
++    for {app, vsn, ebin} <- all do
++      dir = Path.join(rel, "lib/#{app}-#{vsn}")
++      copy_dir(ebin, Path.join(dir, "ebin"))
++      priv = Path.join(Path.dirname(ebin), "priv")
++      if dir?(priv), do: copy_dir(priv, Path.join(dir, "priv"))
++    end
++
++    rel_vsn_dir = Path.join(rel, "releases/#{@rel_vsn}")
++    File.mkdir_p!(rel_vsn_dir)
++
++    apps =
++      for {app, vsn, _} <- all do
++        if app in started_names, do: {app, String.to_charlist(vsn)}, else: {app, String.to_charlist(vsn), :none}
++      end
++
++    release = {:release, {~c"aotc_script", String.to_charlist(@rel_vsn)}, {:erts, String.to_charlist(@erts_vsn)}, apps}
++    File.write!(Path.join(rel_vsn_dir, "aotc_script.rel"), :io_lib.format("~p.~n", [release]))
++    paths = for {app, vsn, _} <- all, do: String.to_charlist(Path.join(rel, "lib/#{app}-#{vsn}/ebin"))
++
++    :ok =
++      :systools.make_script(String.to_charlist(Path.join(rel_vsn_dir, "aotc_script")), [
++        {:path, paths},
++        {:outdir, String.to_charlist(rel_vsn_dir)},
++        {:script_name, ~c"start"},
++        :no_warn_sasl
++      ])
++
++    # -Bd: Ctrl-C terminates instead of the BREAK menu
++    {emu_args, init_args} = split_args(opts.erl_args)
++
++    args =
++      ["-Bd" | emu_args] ++
++        ["--", "-root", "$ROOT", "-bindir", "$ROOT/bin", "-progname", "$ROOT", "-primary_archive", "$ROOT"] ++
++        ["-boot", "$ROOT/releases/#{@rel_vsn}/start", "-noshell", "-s", "Elixir.Aotc.Runtime", "script"] ++ init_args
++
++    subdirs = if sdk_arg, do: ["native-sdk"], else: []
++    embed_sdk(sdk_arg, rel)
++    relinked = if native, do: link_native(native, sdk_arg || extract_embedded_sdk(), rel), else: nil
++
++    package(rel, out, args, relinked || emulator(), ["lib", "releases"] ++ subdirs)
++    File.rm_rf!(rel)
++    unless opts[:quiet], do: IO.puts(:stderr, "elixiraotc: wrote #{out} (#{div(File.stat!(out).size, 1024)} KB)")
++  end
++
++  # As erl does: +Flag and its values go to the emulator, the rest to init
++  defp split_args(args) do
++    {emu, init, _} =
++      Enum.reduce(args, {[], [], false}, fn
++        "+" <> flag, {emu, init, _} -> {emu ++ ["-" <> flag], init, true}
++        arg, {emu, init, true} when binary_part(arg, 0, 1) not in ["-", "+"] -> {emu ++ [arg], init, true}
++        arg, {emu, init, _} -> {emu, init ++ [arg], false}
++      end)
++
++    {emu, init}
++  end
++
++  defp script_forms(file) do
++    case Code.string_to_quoted!(File.read!(file), file: file) do
++      {:__block__, _, forms} -> forms
++      form -> [form]
++    end
++  end
++
++  # Top-level defmodule/alias/import/require stay at the top level, the rest
++  # becomes Aotc.Main.main/0. The Mix.install/2 call is dropped: its deps are
++  # resolved at build time and embedded, so it must not re-fetch at run time.
++  defp compile_script(forms, file, ebin) do
++    forms = Enum.reject(forms, &mix_install?/1)
++
++    {hoisted, body} =
++      Enum.split_with(forms, fn
++        {:defmodule, _, _} -> true
++        {directive, _, _} when directive in [:alias, :import, :require] -> true
++        _ -> false
++      end)
++
++    directives = Enum.reject(hoisted, &match?({:defmodule, _, _}, &1))
++
++    main =
++      quote do
++        defmodule Aotc.Main do
++          @moduledoc false
++          def main do
++            unquote_splicing(directives ++ body)
++          end
++        end
++      end
++
++    Code.put_compiler_option(:ignore_module_conflict, true)
++    beams = Code.compile_quoted({:__block__, [], hoisted ++ [main]}, file)
++    write_modules(beams, ebin)
++    beams
++  end
++
++  defp write_modules(modules, ebin) do
++    for {module, binary} <- modules do
++      File.write!(Path.join(ebin, "#{module}.beam"), binary)
++      module
++    end
++  end
++
++  defp write_app(ebin, app, modules, deps) do
++    File.write!(
++      Path.join(ebin, "#{app}.app"),
++      "{application,#{app},[{description,\"#{app}\"},{vsn,\"#{@rel_vsn}\"},{registered,[]}," <>
++        "{modules,[#{Enum.map_join(modules, ",", &"'#{&1}'")}]},{applications,[#{Enum.join(deps, ",")}]}]}.\n"
++    )
++  end
++
++  # The code path is read with erl_prim_loader, as it lies in an archive
++  # when running from an executable.
++  defp code_path_apps do
++    for dir <- :code.get_path(),
++        {:ok, files} <- [:erl_prim_loader.list_dir(dir)],
++        file <- Enum.map(files, &List.to_string/1),
++        String.ends_with?(file, ".app"),
++        into: %{} do
++      {file |> Path.basename(".app") |> String.to_atom(), List.to_string(dir)}
++    end
++  end
++
++  defp read_file!(path) do
++    {:ok, bin} = :erl_prim_loader.read_file(String.to_charlist(path))
++    bin
++  end
++
++  defp dir?(path) do
++    match?({:ok, {:file_info, _, :directory, _, _, _, _, _, _, _, _, _, _, _}}, :erl_prim_loader.read_file_info(String.to_charlist(path)))
++  end
++
++  defp consult!(path) do
++    {:ok, tokens, _} = path |> read_file!() |> String.to_charlist() |> :erl_scan.string()
++    {:ok, term} = :erl_parse.parse_term(tokens)
++    term
++  end
++
++  # Matches Mix.install/1 or Mix.install/2 at the top level of the script.
++  defp mix_install?({{:., _, [{:__aliases__, _, [:Mix]}, :install]}, _, _}), do: true
++  defp mix_install?(_), do: false
++
++  defp resolve_mix_install(forms) do
++    case Enum.filter(forms, &mix_install?/1) do
++      [] ->
++        []
++
++      [install] ->
++        # Run Mix.install at build time so its dependencies are compiled into
++        # the install project; return the app names it pulled in, so they can
++        # be folded into the release and skip the runtime fetch.
++        Code.eval_quoted(install, [])
++
++        install = Mix.install_project_dir()
++
++        for env <- File.ls!(Path.join(install, "_build")),
++            app <- File.ls!(Path.join([install, "_build", env, "lib"])),
++            app != "mix_install",
++            File.regular?(Path.join([install, "_build", env, "lib", app, "ebin", "#{app}.app"])),
++            do: String.to_atom(app)
++
++      _ ->
++        raise "only one Mix.install/1|2 call is supported"
++    end
++  end
++
++  defp hex_archive_ebin do
++    Mix.start()
++
++    case Path.wildcard(Path.join(Mix.path_for(:archives), "hex-*/*/ebin")) do
++      [ebin | _] -> ebin
++      [] -> raise "Hex is not installed (mix local.hex)"
++    end
++  end
++
++  # Name the OTP/Elixir apps the compiled script and runtime actually call, by
++  # reading each BEAM's imports chunk (remote calls) and mapping modules to the
++  # app that ships them. This replaces the previous fixed kitchen-sink list so a
++  # program that never touches iex/mix/hex/eex/ex_unit/sasl does not embed them.
++  defp referenced_apps(beams, lib_dirs) do
++    module_app = module_to_app_map(lib_dirs)
++
++    beams
++    |> Enum.flat_map(fn {_module, bin} ->
++      case :beam_lib.chunks(bin, [:imports]) do
++        {:ok, {_module, [imports: imports]}} -> imports
++        _ -> []
++      end
++    end)
++    |> Enum.map(fn {m, _f, _a} -> m end)
++    |> Enum.reduce(MapSet.new(), &MapSet.put(&2, &1))
++    |> Enum.flat_map(fn m ->
++      case Map.fetch(module_app, m) do
++        {:ok, app} -> [app]
++        :error -> []
++      end
++    end)
++    |> Enum.uniq()
++  end
++
++  # module -> app, from each .app file's modules list. Built once per build;
++  # VM builtins (:erlang, :erts_internal, ...) belong to no app and are skipped.
++  defp module_to_app_map(lib_dirs) do
++    for {app, ebin} <- lib_dirs, reduce: %{} do
++      acc ->
++        {:application, ^app, props} = consult!(Path.join(ebin, "#{app}.app"))
++
++        Enum.reduce(Keyword.get(props, :modules, []), acc, fn module, acc ->
++          Map.put_new(acc, module, app)
++        end)
++    end
++  end
++
++  defp resolve_apps(roots, lib_dirs), do: roots |> resolve_apps(lib_dirs, %{}) |> Map.values()
++
++  defp resolve_apps([], _lib_dirs, acc), do: acc
++
++  defp resolve_apps([app | rest], lib_dirs, acc) do
++    if Map.has_key?(acc, app) or app == :erts do
++      resolve_apps(rest, lib_dirs, acc)
++    else
++      ebin = Map.get(lib_dirs, app) || raise "application #{app} not found"
++      {:application, ^app, props} = consult!(Path.join(ebin, "#{app}.app"))
++      vsn = props |> Keyword.fetch!(:vsn) |> List.to_string()
++      optional = Keyword.get(props, :optional_applications, [])
++
++      deps =
++        for dep <- Keyword.get(props, :applications, []) ++ Keyword.get(props, :included_applications, []),
++            dep not in optional or Map.has_key?(lib_dirs, dep),
++            do: dep
++
++      resolve_apps(deps ++ rest, lib_dirs, Map.put(acc, app, {app, vsn, ebin}))
++    end
++  end
++
++  # OTP's NIFs and drivers are linked into the emulator
++  defp copy_dir(from, to) do
++    {:ok, names} = :erl_prim_loader.list_dir(String.to_charlist(from))
++
++    for name <- Enum.map(names, &List.to_string/1), path = Path.join(from, name) do
++      cond do
++        dir?(path) -> copy_dir(path, Path.join(to, name))
++        Path.extname(name) in [".so", ".dylib", ".a", ".dll"] -> :ok
++        true ->
++          File.mkdir_p!(to)
++          File.write!(Path.join(to, name), read_file!(path))
++      end
++    end
++  end
++
++  defp tmp_dir do
++    dir = Path.join(System.tmp_dir!(), "elixiraotc-#{System.pid()}-#{System.unique_integer([:positive])}.noindex")
++    File.mkdir_p!(dir)
++    dir
++  end
++
++  # Copy the pre-exported native SDK into the release so the finished tool is
++  # self-contained: a later `--native` invocation reads it back out rather
++  # than requiring a separate download. The SDK holds the emulator's object
++  # files and static libraries (the relink inputs), its exact link order, and
++  # the OTP headers for compiling against it.
++  defp embed_sdk(nil, _rel), do: :ok
++
++  defp embed_sdk(sdk_arg, rel) do
++    sdk = Path.expand(sdk_arg)
++    unless File.dir?(sdk), do: raise("native SDK directory not found: #{sdk}")
++    File.cp_r!(sdk, Path.join(rel, "native-sdk"))
++  end
++
++  # Materialize the embedded native-sdk/ archive entry tree into a temp dir,
++  # reusing the primary archive loader used for the release itself.
++  defp extract_embedded_sdk do
++    {:ok, [[_exe]]} = :init.get_argument(:primary_archive)
++    dir = tmp_dir()
++    materialize_dir("native-sdk", dir)
++    dir
++  end
++
++  # Read an archive subtree (directories via erl_prim_loader:list_dir/1 and
++  # files via read_file/1) and write it to disk. The SDK is embedded as plain
++  # archive entries, so its digests survive the copy unchanged.
++  defp materialize_dir(from, to) do
++    File.mkdir_p!(to)
++
++    case :erl_prim_loader.list_dir(String.to_charlist(from)) do
++      {:ok, names} ->
++        for name <- Enum.map(names, &List.to_string/1) do
++          path = Path.join(from, name)
++          dst = Path.join(to, name)
++
++          case :erl_prim_loader.read_file_info(String.to_charlist(path)) do
++            {:ok, {:file_info, _, :directory, _, _, _, _, _, _, _, _, _, _, _}} ->
++              materialize_dir(path, dst)
++
++            _ ->
++              {:ok, bin} = :erl_prim_loader.read_file(String.to_charlist(path))
++              File.mkdir_p!(Path.dirname(dst))
++              File.write!(dst, bin)
++          end
++        end
++
++      _ ->
++        :ok
++    end
++  end
++
++  # Build the static NIF archives named by NATIVE.json and relink the emulator
++  # with them via the SDK's link.exs. Returns the relinked beam.smp bytes,
++  # which package/5 embeds so the NIF rides in the executable.
++  defp link_native(native, sdk, rel) do
++    native = Path.expand(native)
++    sdk = Path.expand(sdk)
++    unless File.dir?(sdk), do: raise("native SDK not available (pass --native-sdk or build a self-contained tool)")
++    descriptor = native |> File.read!() |> JSON.decode!()
++    nifs = Map.get(descriptor, "nifs", [])
++    link_args = Map.get(descriptor, "link_args", [])
++
++    workspace = Path.join(rel, "native")
++    File.mkdir_p!(workspace)
++
++    built =
++      Enum.map(nifs, fn nif ->
++        cond do
++          Map.has_key?(nif, "archive") ->
++            %{"archive" => Path.expand(nif["archive"], Path.dirname(native)), "init" => nif["init"]}
++
++          Map.has_key?(nif, "c") ->
++            src = Path.expand(nif["c"], Path.dirname(native))
++            archive = compile_c(src, sdk, workspace)
++            %{"archive" => archive, "init" => nif["init"]}
++
++          Map.has_key?(nif, "crate") ->
++            crate = Path.expand(nif["crate"], Path.dirname(native))
++            archive = compile_crate(crate, workspace)
++            %{"archive" => archive, "init" => nif["init"]}
++
++          true ->
++            raise "NIF entry needs one of \"archive\", \"c\", or \"crate\": #{inspect(nif)}"
++        end
++      end)
++
++    staged = Path.join(workspace, "native.json")
++    File.write!(staged, JSON.encode!(%{"schema" => 1, "nifs" => built, "link_args" => link_args}) <> "\n")
++    output = Path.join(workspace, "beam.smp")
++
++    System.argv([sdk, staged, output])
++    {_value, _binding} = Code.eval_file(Path.join(sdk, "link.exs"))
++    File.read!(output)
++  end
++
++  # Compile a C NIF against the SDK's headers into a static archive. The init
++  # symbol is <STATIC_ERLANG_NIF_LIBNAME>_nif_init, supplied by the descriptor.
++  defp compile_c(src, sdk, workspace) do
++    src = Path.expand(src)
++    include = Path.join(sdk, "include")
++
++    object = Path.join(workspace, Path.basename(src, Path.extname(src)) <> ".o")
++    archive = Path.join(workspace, Path.basename(src, Path.extname(src)) <> ".a")
++
++    command!("cc", ["-fPIC", "-I#{include}", "-c", src, "-o", object])
++    command!("ar", ["rcs", archive, object])
++    archive
++  end
++
++  # Build a rustler crate as a staticlib with cargo and return the resulting
++  # lib<crate>.a. rustler 0.38 exports <crate>_nif_init; the descriptor names it.
++  defp compile_crate(crate, _workspace) do
++    crate = Path.expand(crate)
++
++    command!(
++      "cargo",
++      ["build", "--release", "--manifest-path", Path.join(crate, "Cargo.toml")],
++      cd: crate
++    )
++
++    toml = File.read!(Path.join(crate, "Cargo.toml"))
++    name = Regex.run(~r/^name\s*=\s*"([^"]+)"/, toml, capture: :all_but_first) |> List.first()
++
++    archive = Path.join(crate, "target/release/lib#{name}.a")
++
++    unless File.regular?(archive),
++      do: raise("cargo did not produce #{archive} (does the crate define [lib] crate-type = [\"staticlib\"]?)")
++
++    archive
++  end
++
++  defp command!(program, args, opts \\ []) do
++    {_, status} = System.cmd(program, args, opts ++ [into: IO.stream(:stdio, :line), stderr_to_stdout: true])
++
++    if status != 0, do: raise("#{program} exited with #{status}")
++  end
++
++  # The executable: the emulator followed by a zip archive of the release
++  # directory, whose offsets are relative to the start of the file and
++  # whose comment holds the arguments (see erts/emulator/beam/erl_aot.c).
++  # Built twice, so that the second one gets the JITC chunks and the atom
++  # table snapshot the first one writes when run with -erlaot:record.
++  defp package(rel, out, args, emulator, subdirs) do
++    tmp = Path.expand(out <> ".tmp")
++    record_dir = Path.expand(out <> ".tmp.d")
++    File.rm_rf!(record_dir)
++    File.mkdir_p!(record_dir)
++    write_executable(tmp, emulator, entries(rel, nil, subdirs), args)
++
++    {output, status} = System.cmd(tmp, ["-erlaot:record", record_dir], stderr_to_stdout: true)
++    IO.write(:stderr, output)
++    if status != 0, do: raise("compiling the code failed")
++
++    extra = if File.dir?(Path.join(record_dir, "erts-#{@erts_vsn}")), do: entries(record_dir, nil, ["erts-#{@erts_vsn}"]), else: []
++    write_executable(tmp, emulator, entries(rel, record_dir, subdirs) ++ extra, args)
++    File.rename!(tmp, out)
++    File.rm_rf!(record_dir)
++  end
++
++  defp entries(dir, overlay, subdirs) do
++    for sub <- subdirs,
++        path <- Path.wildcard(Path.join([dir, sub, "**"]), match_dot: true) |> Enum.sort(),
++        File.regular?(path) do
++      name = Path.relative_to(path, dir)
++      overlaid = overlay && Path.join(overlay, name)
++      {name, if(overlaid && File.regular?(overlaid), do: overlaid, else: path)}
++    end
++  end
++
++  defp write_executable(out, emulator, entries, args) do
++    File.open!(out, [:write, :binary], fn f ->
++      IO.binwrite(f, emulator)
++      offset = byte_size(emulator)
++
++      {central, offset} =
++        Enum.reduce(entries, {[], offset}, fn {name, path}, {central, offset} ->
++          data = File.read!(path)
++          crc = :erlang.crc32(data)
++          header = zip_header(0x04034B50, name, crc, byte_size(data))
++          IO.binwrite(f, [header, name, data])
++          central_entry = [zip_header(0x02014B50, name, crc, byte_size(data), offset), name]
++          {[central_entry | central], offset + IO.iodata_length([header, name, data])}
++        end)
++
++      central = Enum.reverse(central)
++      cd_size = IO.iodata_length(central)
++      comment = Enum.join(["erlaotc #{@erts_vsn}" | args], "\n") <> "\n"
++
++      IO.binwrite(f, [
++        central,
++        <<0x06054B50::32-little, 0::16, 0::16, length(entries)::16-little, length(entries)::16-little, cd_size::32-little,
++          offset::32-little, byte_size(comment)::16-little>>,
++        comment
++      ])
++    end)
++
++    File.chmod!(out, 0o755)
++  end
++
++  # Stored, with a fixed timestamp (1980-01-01)
++  defp zip_header(0x04034B50, name, crc, size) do
++    <<0x04034B50::32-little, 20::16-little, 0x0800::16-little, 0::16, 0::16, 0x21::16-little, crc::32-little,
++      size::32-little, size::32-little, byte_size(name)::16-little, 0::16>>
++  end
++
++  defp zip_header(0x02014B50, name, crc, size, offset) do
++    <<0x02014B50::32-little, 20::16-little, 20::16-little, 0x0800::16-little, 0::16, 0::16, 0x21::16-little,
++      crc::32-little, size::32-little, size::32-little, byte_size(name)::16-little, 0::16, 0::16, 0::16, 0::16,
++      0::32, offset::32-little>>
++  end
++
++  # The emulator to embed: this executable's own, or beam.smp of this OTP.
++  defp emulator do
++    case :init.get_argument(:primary_archive) do
++      {:ok, [[exe]]} ->
++        exe = List.to_string(exe)
++        data = File.read!(exe)
++        binary_part(data, 0, emulator_size(data))
++
++      :error ->
++        {:ok, [[bindir]]} = :init.get_argument(:bindir)
++        File.read!(Path.join(List.to_string(bindir), "beam.smp"))
++    end
++  end
++
++  # The offset of the archive's first local file header
++  defp emulator_size(data) do
++    tail = binary_part(data, byte_size(data) - min(byte_size(data), 65557), min(byte_size(data), 65557))
++    {eocd, _} = :binary.matches(tail, <<0x06054B50::32-little>>) |> List.last()
++    <<_::binary-size(^eocd + 10), n::16-little, _::32, cd_offset::32-little, _::binary>> = tail
++    <<_::binary-size(^cd_offset), cd::binary>> = data
++    first_offset(cd, n, byte_size(data))
++  end
++
++  defp first_offset(_cd, 0, min), do: min
++
++  defp first_offset(<<0x02014B50::32-little, _::binary-size(24), name_len::16-little, extra_len::16-little,
++                      comment_len::16-little, _::64, offset::32-little, rest::binary>>, n, min) do
++    <<_::binary-size(^name_len + ^extra_len + ^comment_len), rest::binary>> = rest
++    first_offset(rest, n - 1, min(min, offset))
++  end
++end
++
++ElixirAotc.main(System.argv())
+diff --git a/examples/hello.exs b/examples/hello.exs
+new file mode 100644
+index 0000000000..f490419ea2
+--- /dev/null
++++ b/examples/hello.exs
+@@ -0,0 +1,11 @@
++pid = self()
++
++Task.async(fn ->
++  dbg(self())
++  send(pid, {:hi, self()})
++end)
++
++receive do
++  message ->
++    dbg(message)
++end
+diff --git a/examples/iex.exs b/examples/iex.exs
+new file mode 100644
+index 0000000000..1cdcc12d6e
+--- /dev/null
++++ b/examples/iex.exs
+@@ -0,0 +1,37 @@
++# The `iex` command; bin/iex starts the VM with `-user elixir`, here the
++# shell is started afterwards with shell:start_interactive/1.
++defmodule IExCommand do
++  def start_node(argv) do
++    case argv do
++      ["--sname", name | rest] -> start_node(:shortnames, name, rest)
++      ["--name", name | rest] -> start_node(:longnames, name, rest)
++      ["--cookie", cookie | rest] -> :erlang.set_cookie(String.to_atom(cookie)); start_node(rest)
++      ["--erl", _ | _] -> raise ArgumentError, "--erl is not supported by this executable"
++      [_ | rest] -> start_node(rest)
++      [] -> :ok
++    end
++  end
++
++  defp start_node(domain, name, rest) do
++    start_epmd()
++    name = if name == "undefined", do: :undefined, else: String.to_atom(name)
++    {:ok, _} = :net_kernel.start(name, %{name_domain: domain})
++    start_node(rest)
++  end
++
++  defp start_epmd do
++    {:ok, [[bindir]]} = :init.get_argument(:bindir)
++    port = Port.open({:spawn_executable, Path.join(bindir, "epmd")}, [:exit_status, args: ["-daemon"]])
++
++    receive do
++      {^port, {:exit_status, 0}} -> :ok
++    end
++  end
++end
++
++IExCommand.start_node(System.argv())
++
++{:iex, :start, [opts, _mfa]} = :iex.shell()
++argv = Enum.map(["--no-halt", "+iex" | System.argv()], &String.to_charlist/1)
++:ok = :shell.start_interactive({:iex, :start, [opts, {Kernel.CLI, :main, [argv]}]})
++System.no_halt(true)
+diff --git a/examples/nanoid.exs b/examples/nanoid.exs
+new file mode 100644
+index 0000000000..0000000000
+--- /dev/null
++++ b/examples/nanoid.exs
+@@ -0,0 +1,8 @@
++# https://hex.pm/packages/nanoid
++# https://github.com/ai/nanoid
++# https://zelark.github.io/nano-id-cc/
++
++Mix.install([
++  {:nanoid, "~> 2.1"}
++])
++
++IO.inspect(Nanoid.generate(12, "0123456789abcdefghijklmnopqrstuvwxyz"))
+diff --git a/examples/req.exs b/examples/req.exs
+new file mode 100644
+index 0000000000..d84ea87cce
+--- /dev/null
++++ b/examples/req.exs
+@@ -0,0 +1,15 @@
++Mix.install([
++  :req,
++  :bandit
++])
++
++{:ok, _} =
++  Bandit.start_link(
++    plug: fn conn, _ ->
++      Plug.Conn.send_resp(conn, 200, "Hello, World!")
++    end,
++    port: 9999
++  )
++
++Req.get!("http://localhost:9999")
++|> dbg()

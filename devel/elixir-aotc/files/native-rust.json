@@ -1,0 +1,7 @@
+{
+  "schema": 1,
+  "nifs": [
+    {"crate": "rust_greet", "init": "rust_greet_nif_init"}
+  ],
+  "link_args": []
+}
