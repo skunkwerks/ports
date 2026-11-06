@@ -849,6 +849,7 @@
     SUBDIR += oak
     SUBDIR += obliterate
     SUBDIR += oc
+    SUBDIR += ocibhyve
     SUBDIR += ocijail
     SUBDIR += oddjob
     SUBDIR += odo

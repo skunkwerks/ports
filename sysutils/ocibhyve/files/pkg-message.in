@@ -1,0 +1,18 @@
+[
+{ type: install
+  message: <<EOM
+ocibhyve boots guests from the OCIBHYVE kernel in /boot/kernel.OCIBHYVE:
+
+  pkg install FreeBSD-set-kernels-ocibhyve
+
+Any image runs. One without the guest agent gets a copy of the host's,
+%%PREFIX%%/libexec/ocibhyve-agent, for the life of the container.
+%%PREFIX%%/share/examples/ocibhyve/Containerfile builds an image with
+the agent in it. See ocibhyve(8).
+
+Use it with podman:
+
+  podman --runtime ocibhyve run --rm ghcr.io/freebsd/freebsd-runtime:15.1 uname -r
+EOM
+}
+]
