@@ -1,0 +1,9 @@
+REA is a local-only reverse engineering tool with one CLI and MCP server.
+It analyses native, managed, Electron/JavaScript, packaged, firmware, and
+browser targets, producing Evidence with provenance across both adapters.
+It works with Ghidra, IDA, Hopper, Cutter, JADX, and Frida targets.
+
+This port ships the CLI and MCP server as a single self-contained
+executable built with node-seam. The @lydell/node-pty dependency has no
+FreeBSD prebuilt binary, so terminal-capture features that depend on it
+degrade gracefully; all other analysis commands work unchanged.
