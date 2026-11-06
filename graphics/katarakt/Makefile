@@ -1,6 +1,6 @@
 PORTNAME=	katarakt
 PORTVERSION=	0.2
-PORTREVISION=	34
+PORTREVISION=	35
 CATEGORIES=	graphics
 
 MAINTAINER=	kurt@kmk-computers.de
@@ -13,16 +13,20 @@ LICENSE_FILE=	${WRKSRC}/LICENSE
 BUILD_DEPENDS=	a2x:textproc/asciidoc
 LIB_DEPENDS=	libpoppler-qt5.so:graphics/poppler-qt5
 
-USES=		compiler:c++11-lang gl pkgconfig qmake qt:5
-USE_QT=		buildtools:build core gui xml dbus network widgets
-USE_GL=		gl
+USES=		compiler:c++11-lang desktop-file-utils gl pkgconfig qmake qt:5
 
 USE_GITLAB=	yes
 GL_SITE=	https://gitlab.cs.fau.de
 GL_ACCOUNT=	Qui_Sum
 GL_TAGNAME=	99735bc0b15b57d689b6c982d43b85ed1b40ef45
 
+USE_GL=		gl
+USE_QT=		core dbus gui network widgets xml buildtools:build
+
+SUB_FILES=	katarakt.desktop
+
 PLIST_FILES=	bin/katarakt \
+		share/applications/katarakt.desktop \
 		share/man/man1/katarakt.1.gz
 
 post-build:
@@ -30,5 +34,6 @@ post-build:
 
 post-install:
 	${INSTALL_MAN} ${WRKSRC}/doc/katarakt.1 ${STAGEDIR}${PREFIX}/share/man/man1
+	${INSTALL_DATA} ${WRKDIR}/katarakt.desktop ${STAGEDIR}${DESKTOPDIR}
 
 .include <bsd.port.mk>
