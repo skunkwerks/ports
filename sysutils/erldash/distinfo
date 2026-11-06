@@ -1,4 +1,4 @@
-TIMESTAMP = 1774025552
+TIMESTAMP = 1774097435
 SHA256 (rust/crates/adler32-1.2.0.crate) = aae1277d39aeec15cb388266ecc24b11c80469deae6067e17a1a7aa9e5c1f234
 SIZE (rust/crates/adler32-1.2.0.crate) = 6411
 SHA256 (rust/crates/aho-corasick-1.1.4.crate) = ddd31a130427c27518df266943a5308ed92d4b226cc639f5a8f1002816174301
@@ -515,5 +515,5 @@ SHA256 (rust/crates/wit-parser-0.244.0.crate) = ecc8ac4bc1dc3381b7f59c34f00b67e1
 SIZE (rust/crates/wit-parser-0.244.0.crate) = 159371
 SHA256 (rust/crates/zmij-1.0.21.crate) = b8848ee67ecc8aedbaf3e4122217aff892639231befc6a1b58d29fff4c2cabaa
 SIZE (rust/crates/zmij-1.0.21.crate) = 26665
-SHA256 (sile-erldash-v0.4.0_GH0.tar.gz) = 0c23a3f2fbbafa154eb833cf6a75f9fe9a637f609f691b5e6c530889213d51b7
-SIZE (sile-erldash-v0.4.0_GH0.tar.gz) = 2223072
+SHA256 (skunkwerks-erldash-v0.4.1_GH0.tar.gz) = f6fe23d4630f613898db3a5875fc04e2822f3e58fca1c2549f3d90fec9f29504
+SIZE (skunkwerks-erldash-v0.4.1_GH0.tar.gz) = 2228284
