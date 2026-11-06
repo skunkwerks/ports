@@ -1,0 +1,31 @@
+[
+{ type: install
+  message: <<EOM
+Patchy runs from %%RELEASE%% as the www user and needs PostgreSQL with
+the citext extension, databases/postgresql18-contrib.
+
+To set it up:
+
+ 1. Create a database and a role for it, then copy
+    %%ETCDIR%%/patchy.env.sample to %%ETCDIR%%/patchy.env and set
+    DATABASE_URL, SECRET_KEY_BASE, PHX_HOST and PORT in it. Keep the
+    file readable by www only.
+
+ 2. Enable the service, create the tables and start it:
+
+      service patchy enable
+      service patchy migrate
+      service patchy start
+
+ 3. Put a TLS proxy in front of the port that passes X-Forwarded-Proto
+    and X-Forwarded-For, then register at https://PHX_HOST/users/register
+    and make an API token at /settings/api for arc. The first account is
+    the administrator. Later accounts wait for approval under /admin/users
+    unless REQUIRE_APPROVAL=0 is set in patchy.env.
+
+The hook that closes revisions when their commits land is at
+%%RELEASE%%/lib/patchy-*/priv/scripts/patchy-post-receive and needs
+ftp/curl. The README in %%DOCSDIR%% has the details.
+EOM
+}
+]
