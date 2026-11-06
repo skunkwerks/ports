@@ -1,0 +1,13 @@
+sghtmltopdf is an HTML-to-PDF renderer in the spirit of wkhtmltopdf,
+written in Rust and without requiring a browser engine. It builds the
+layout engine itself, using html5ever for HTML parsing, and the Servo
+cssparser and selectors crates for CSS parsing and matching.
+
+It targets documents that flow top to bottom with explicit page breaks
+(invoices, receipts, reports) rather than arbitrary web pages. Page
+breaks, CSS fragmenting, and @page margin boxes are first-class, and pages
+stream out as soon as their layout is final, so memory does not grow with
+document size.
+
+The CLI can render a file, or run an HTTP server that returns PDF for posted
+HTML.
