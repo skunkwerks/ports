@@ -28,7 +28,7 @@ RUN_DEPENDS+=	bhyve-firmware>0:sysutils/bhyve-firmware
 RUN_DEPENDS+=	u-boot-bhyve-arm64>0:sysutils/u-boot-bhyve-arm64
 .endif
 
-USES=		go:modules samba:run
+USES=		go:modules samba:4.25,run
 USE_RC_SUBR=	${PORTNAME}
 
 GO_MODULE=	github.com/alchemillahq/sylve
