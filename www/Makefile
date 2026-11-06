@@ -592,6 +592,7 @@
     SUBDIR += node22
     SUBDIR += node24
     SUBDIR += node26
+    SUBDIR += node26-sea
     SUBDIR += nostromo
     SUBDIR += novnc
     SUBDIR += npc
