@@ -1,6 +1,6 @@
 PORTNAME=	maki
 DISTVERSIONPREFIX=	v
-DISTVERSION=	0.6.4
+DISTVERSION=	0.6.5
 CATEGORIES=	devel
 
 MAINTAINER=	lbartoletti@FreeBSD.org
@@ -12,15 +12,17 @@ LICENSE_FILE=	${WRKSRC}/LICENSE
 
 RUN_DEPENDS=	bash:shells/bash
 
-USES=		cargo gmake perl5 pkgconfig python:build ssl
+USES=		cargo pkgconfig python:build
 USE_GITHUB=	yes
 GH_ACCOUNT=	tontinton
-USE_PERL5=	build
+
+CARGO_BUILD_ARGS+=	--config='profile.release.panic="unwind"'
+CARGO_INSTALL_ARGS+=	--config='profile.release.panic="unwind"'
+
+MAKE_ENV+=	PYO3_PYTHON=${PYTHON_CMD}
 
 BINARY_ALIAS=	python3=${PYTHON_CMD}
 
 PLIST_FILES=	bin/maki
-
-MAKE_ENV+=	PYO3_PYTHON=${PYTHON_CMD}
 
 .include <bsd.port.mk>
