@@ -1,0 +1,19 @@
+[
+{ type: install
+  message: <<EOM
+claude-agent-acp speaks ACP on stdin/stdout; point your editor or agent
+client at:
+
+  %%PREFIX%%/bin/claude-agent-acp
+
+It runs misc/claude-code's %%PREFIX%%/bin/claude by default; set
+CLAUDE_CODE_EXECUTABLE to override that.
+
+For the Tidewave app, which cannot download its own ACP executable on
+FreeBSD, add to ~/.config/tidewave/app.toml and restart it:
+
+  [env]
+  TIDEWAVE_CLAUDE_AGENT_ACP_EXECUTABLE = "%%PREFIX%%/bin/claude-agent-acp"
+EOM
+}
+]

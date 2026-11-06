@@ -1,0 +1,5 @@
+© Anthropic PBC. All rights reserved. Use is subject to the Legal Agreements
+outlined here: https://code.claude.com/docs/en/legal-and-compliance.
+
+This covers the bundled @anthropic-ai/claude-agent-sdk only. The adapter
+itself and @agentclientprotocol/sdk are Apache-2.0, and zod is MIT.
