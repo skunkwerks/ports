@@ -6789,6 +6789,7 @@
     SUBDIR += rote
     SUBDIR += rpclib
     SUBDIR += rsvndump
+    SUBDIR += rtk
     SUBDIR += rttr
     SUBDIR += ruby-bsearch
     SUBDIR += ruby-build
