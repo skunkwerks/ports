@@ -1,0 +1,40 @@
+[
+{ type: install
+  message: <<EOM
+casa is installed and not yet running. To bring up the first node:
+
+1. Copy the sample config and edit it. One node with an empty
+   peers list is a standalone agent. For a cluster, set role to
+   control and list the control nodes in peers:
+
+     vi %%ETCDIR%%/casa.ucl
+
+2. Enable and start the daemon. The first start makes /var/db/casa
+   and the node's identity. casa logs to syslog through the log {}
+   block of casa.ucl, facility daemon, tag casa. The shipped
+   syslog.d and newsyslog entries put every casa line in
+   /var/log/casa/casa.log and rotate it daily:
+
+     service casa enable
+     service casa start
+     casa status
+     tail -f /var/log/casa/casa.log
+
+3. On the first control node, create the cluster. init prints a
+   bootstrap token that lives 15 minutes. Then print the node's
+   fingerprint, which every other node pins before it speaks:
+
+     casa cluster init
+     casa key show --format json
+
+4. On each other node, join through the first one. A control node
+   joins as a voter, an agent as a managed host:
+
+     casa cluster join "[addr]:51802" --token <token> --fingerprint <fp>
+     casa cluster status
+
+%%DOCSDIR%%/USAGE.md walks through a three node cluster, an operator
+key and the first policy. casa(1) lists every command.
+EOM
+}
+]

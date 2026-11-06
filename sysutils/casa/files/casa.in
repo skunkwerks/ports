@@ -1,0 +1,44 @@
+#!/bin/sh
+
+# PROVIDE: casa
+# REQUIRE: NETWORKING syslogd
+# KEYWORD: shutdown
+
+# Add these lines to /etc/rc.conf.local or /etc/rc.conf to enable casa:
+#
+# casa_enable (bool):	Set to NO by default.
+#			Set it to YES to enable casa.
+# casa_config (path):	The config file.
+#			Default: %%ETCDIR%%/casa.ucl
+# casa_args (str):	Extra arguments for casa daemon, such as
+#			--role control. Default: empty.
+#
+# casa runs as root. The first start runs casa init, which makes the
+# state directory /var/db/casa with mode 0700 and the node's identity.
+# casa logs to syslog itself through the log {} block of casa.ucl.
+
+. /etc/rc.subr
+
+name=casa
+rcvar=casa_enable
+
+load_rc_config $name
+
+: ${casa_enable:=NO}
+: ${casa_config:=%%ETCDIR%%/casa.ucl}
+: ${casa_args:=}
+
+pidfile=/var/run/casa.pid
+procname=%%PREFIX%%/bin/casa
+command=%%PREFIX%%/bin/casa
+command_args="daemon --config ${casa_config} --pidfile ${pidfile} \
+	${casa_args}"
+command_background=YES
+start_precmd=casa_precmd
+
+casa_precmd()
+{
+	${procname} init --config "${casa_config}" --pidfile "${pidfile}"
+}
+
+run_rc_command "$1"

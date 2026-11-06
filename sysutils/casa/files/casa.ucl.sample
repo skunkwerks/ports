@@ -1,0 +1,51 @@
+# casa daemon configuration. DESIGN.md section 13 lists every key.
+# Everything here is the default except peers, which is empty: a
+# standalone agent that runs the policy installed with casa policy
+# install. Set peers to the control nodes to join a cluster, and
+# role = "control" on the three nodes that form it.
+
+node {
+  # The control daemon listens here. Agents do not listen.
+  listen    = "[::]:51802"
+  state_dir = "/var/db/casa"
+  # The rc script sets /var/run/casa.pid with --pidfile, so a standalone
+  # run uses casa.pid in the state directory.
+  pidfile   = "/var/db/casa/casa.pid"
+}
+
+cluster {
+  # control or agent. A control node also runs the agent loop.
+  role  = "agent"
+  # First contact only. After the join the registry is the peer list.
+  peers = [ ]
+  # peers = [ "[fd00:ca5a:0:1::10]:51802",
+  #           "[fd00:ca5a:0:1::11]:51802",
+  #           "[fd00:ca5a:0:1::12]:51802" ]
+}
+
+agent {
+  enabled   = true
+  interval  = 300
+  splaytime = 300
+  passes    = 3
+}
+
+reports {
+  # The bounded report log on a control node, section 9.5.
+  keep = 100000
+  days = 7
+}
+
+log {
+  # Every line goes to stderr and to syslog. /var/run/log is the local
+  # socket, or a tcp:// or udp:// collector, or "none" for stderr only.
+  syslog   = "/var/run/log"
+  tag      = "casa"
+  facility = "daemon"
+  level    = "info"
+}
+
+lua {
+  memory_limit_mb = 64
+  load_timeout_s  = 30
+}
