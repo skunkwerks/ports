@@ -1,0 +1,10 @@
+Tidewave is a coding agent for web application development.  Unlike agents
+that only read your source, it connects to your running application, so it
+can query the database, inspect logs, evaluate code in the live runtime and
+drive the browser while it works.  Phoenix and Rails are supported.
+
+This is the command line interface.  It runs the Tidewave server and serves
+the web interface, which you then open in your browser.
+
+A desktop application that supervises the same server from a system tray
+icon is packaged separately as deskutils/tidewave-app.
