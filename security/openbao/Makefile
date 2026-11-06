@@ -1,7 +1,6 @@
 PORTNAME=	openbao
 DISTVERSIONPREFIX=	v
-DISTVERSION=	2.6.2
-PORTREVISION=	3
+DISTVERSION=	2.7.1
 CATEGORIES=	security
 MASTER_SITES+=	https://raw.githubusercontent.com/${PORTNAME}/${PORTNAME}/${DISTVERSIONFULL}/
 DISTFILES=	go.mod \
@@ -9,7 +8,7 @@ DISTFILES=	go.mod \
 		api/auth/kubernetes/go.mod \
 		api/auth/userpass/go.mod \
 		api/go.mod \
-		helper/stubbolt/go.mod \
+		internal/helper/stubbolt/go.mod \
 		sdk/go.mod
 
 MAINTAINER=	jake@metalrip.com
@@ -38,7 +37,7 @@ GROUPS=		${PORTNAME}
 PLIST_FILES=	bin/${BIN_NAME}
 
 BIN_NAME=		bao
-GITID=			dd9c19c37a878cf4a81b18efb8d6f0599c7da923
+GITID=			a5db72cef75c24b920ade02065b18dd8eb666bac
 SOURCE_DATE_EPOCH=	${TIMEEPOCHNOW:gmtime}
 TIMEEPOCHNOW=		%Y-%m-%dT%H:%M:%SZ
 
