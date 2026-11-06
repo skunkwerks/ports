@@ -16,7 +16,7 @@ sys.path.insert(0, "%%HERMES_LIBDIR%%")
 os.environ.setdefault("HERMES_BUNDLED_SKILLS", "%%DATADIR%%/skills")
 os.environ.setdefault("HERMES_OPTIONAL_SKILLS", "%%DATADIR%%/optional-skills")
 
-from %%ENTRY_MODULE%% import %%ENTRY_FUNC%% as _entry
+from %%ENTRY_MODULE%% import main as _entry
 
 if __name__ == "__main__":
     sys.exit(_entry())

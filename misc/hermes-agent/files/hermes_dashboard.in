@@ -81,8 +81,9 @@ hermes_dashboard_prestart()
     if [ -z "${hermes_dashboard_home}" ] || [ ! -d "${hermes_dashboard_home}" ]; then
         err 1 "home directory for user '${hermes_dashboard_user}' not found"
     fi
-    # piddir must be writable by the unprivileged user since daemon(8)
-    # drops privileges (-u) before writing the supervisor pidfile (-P).
+    # piddir must be writable by the unprivileged user since rc.subr drops
+    # privileges (via ${name}_user) before daemon(8) writes the supervisor
+    # pidfile (-P).  Always (re-)assert ownership in case of stale state.
     install -d -m 0755 -o "${hermes_dashboard_user}" "${piddir}"
 }
 
