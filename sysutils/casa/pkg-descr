@@ -1,0 +1,17 @@
+casa is DevOps tooling for the Discerning Developer: a configuration
+management daemon for Unix systems that keeps hosts in a declared
+state and keeps them there.
+
+Policy is Lua 5.4. A bundle declares promises for files, packages,
+services, users, groups, sysrc and sysctl. Each run converges the host
+in a fixed order with per-promise locks, a dry run mode, and a report
+that says what was kept, repaired or not. Facts are collected on every
+run. Site data lives beside the policy in one declared hierarchy and
+is resolved from the point of view of one host.
+
+One binary is the agent, the control plane and the command line.
+Three control nodes form a raft cluster that holds policy, membership,
+node tags and cluster variables. Agents keep one mTLS connection to a
+control node, hear of changes as they commit, fetch policy by content
+hash, verify it and converge on a splayed interval. Agents never
+listen.
