@@ -1,0 +1,4 @@
+Demucs is a music source separation model. It splits a mixed track into
+stems such as drums, bass, vocals and other instruments, working directly
+on the waveform. It ships the demucs command line tool and a Python API,
+and fetches pretrained models from Hugging Face on first use.
