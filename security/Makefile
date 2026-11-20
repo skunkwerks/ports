@@ -1159,6 +1159,7 @@
     SUBDIR += rauthy
     SUBDIR += rbw
     SUBDIR += rcracki_mt
+    SUBDIR += rea
     SUBDIR += rekor
     SUBDIR += reop
     SUBDIR += rhash
