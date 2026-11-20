@@ -1,6 +1,6 @@
 PORTNAME=	quiche
 DISTVERSION=	0.24.5
-PORTREVISION=	10
+PORTREVISION=	11
 CATEGORIES=	net
 
 MAINTAINER=	junho.choi@gmail.com
@@ -12,7 +12,7 @@ LICENSE_FILE=	${WRKSRC}/COPYING
 
 BUILD_DEPENDS=	git>0:devel/git
 
-USES=		cargo llvm:build,lib
+USES=		cargo llvm:build
 USE_GITHUB=	yes
 GH_ACCOUNT=	cloudflare
 GH_TUPLE=	google:boringssl:e1d6cd95a:boringssl/quiche/deps/boringssl
