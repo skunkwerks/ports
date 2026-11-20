@@ -34,7 +34,7 @@ BUILD_DEPENDS=	bash:shells/bash \
 		${PYTHON_PKGNAMEPREFIX}Jinja2>0:devel/py-Jinja2@${PY_FLAVOR} \
 		${PYTHON_PKGNAMEPREFIX}ply>0:devel/py-ply@${PY_FLAVOR} \
 		bindgen:devel/rust-bindgen-cli \
-		esbuild:devel/esbuild \
+		${LOCALBASE}/lib/node_modules/esbuild/package.json:devel/esbuild-node \
 		gperf:devel/gperf \
 		flock:sysutils/flock \
 		node:www/node \
@@ -374,6 +374,9 @@ do-configure:
 		--verbose \
 		--verbose \
 		${CARGO_BUILD_ARGS}
+	${RM} -r ${WRKSRC}/third_party/devtools-frontend/src/node_modules/esbuild
+	${LN} -sf ${LOCALBASE}/lib/node_modules/esbuild \
+		${WRKSRC}/third_party/devtools-frontend/src/node_modules/esbuild
 
 	# Setup rustc dependency
 	@${MKDIR} ${WRKSRC}/third_party/rust-toolchain/bin \

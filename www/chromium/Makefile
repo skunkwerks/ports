@@ -14,8 +14,7 @@ DISTFILES=	${DISTNAME}-lite${EXTRACT_SUFX} \
 		TypeScript-${TSV}-vendor.tar.gz:external
 
 USE_GITHUB=	nodefault
-GH_TUPLE=	evanw:esbuild:v${_ESBUILD_VERSION:sh}:esbuild/esbuild \
-		microsoft:TypeScript:v${TSV}:typescript/typescript \
+GH_TUPLE=	microsoft:TypeScript:v${TSV}:typescript/typescript \
 		google:crubit:dcf92a1baf2c8a6561ed0361502cfec20e2f65f5:crubit/third_party/rust-toolchain/lib/third_party/crubit
 
 MAINTAINER=	chromium@FreeBSD.org
@@ -31,7 +30,7 @@ BUILD_DEPENDS=	bash:shells/bash \
 		${PYTHON_PKGNAMEPREFIX}Jinja2>0:devel/py-Jinja2@${PY_FLAVOR} \
 		${PYTHON_PKGNAMEPREFIX}ply>0:devel/py-ply@${PY_FLAVOR} \
 		bindgen:devel/rust-bindgen-cli \
-		esbuild:devel/esbuild \
+		${LOCALBASE}/lib/node_modules/esbuild/package.json:devel/esbuild-node \
 		gperf:devel/gperf \
 		flock:sysutils/flock \
 		node:www/node \
@@ -101,8 +100,6 @@ CARGO_ENV+=		RUSTC_BOOTSTRAP=1 \
 CARGO_INSTALL=		No
 CARGO_BUILD=		No
 CARGO_TEST=		No
-
-_ESBUILD_VERSION=	${MAKE} -C ${PORTSDIR}/devel/esbuild -V DISTVERSION
 
 CPE_VENDOR=	google
 CPE_PRODUCT=	chrome
@@ -355,13 +352,9 @@ do-configure:
 		--verbose \
 		--verbose \
 		${CARGO_BUILD_ARGS}
-	(cd ${WRKSRC}/esbuild && \
-		${LOCALBASE}/bin/node scripts/esbuild.js \
-		/usr/local/bin/esbuild --neutral && \
-		rm -rf ${WRKSRC}/third_party/devtools-frontend/src/node_modules/esbuild && \
-		ln -sf ${WRKSRC}/esbuild/npm/esbuild \
-		${WRKSRC}/third_party/devtools-frontend/src/node_modules/esbuild \
-	)
+	${RM} -r ${WRKSRC}/third_party/devtools-frontend/src/node_modules/esbuild
+	${LN} -sf ${LOCALBASE}/lib/node_modules/esbuild \
+		${WRKSRC}/third_party/devtools-frontend/src/node_modules/esbuild
 
 	# Setup rustc dependency
 	@${MKDIR} ${WRKSRC}/third_party/rust-toolchain/bin \
