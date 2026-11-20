@@ -1,4 +1,5 @@
 PORTNAME=	haproxy
+PORTREVISION=	1
 DISTVERSION=	3.5-dev8
 CATEGORIES=	net www
 MASTER_SITES=	http://www.haproxy.org/download/3.5/src/devel/
