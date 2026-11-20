@@ -1,0 +1,10 @@
+ocibhyve is an OCI runtime that runs each container in its own bhyve
+virtual machine, with its own kernel. It is a drop-in for ocijail under
+podman and buildah, with the same command line, state and exit codes.
+
+The container image is the guest's root file system, shared from the host
+over virtio-9p. An agent in the image runs as the guest's process 1, runs
+the container's process, and relays its input, output and exit status to
+the host over virtio-console. On arm64, bhyve boots the guest kernel
+directly. On amd64, bhyveload loads it before bhyve starts. Either way a
+container is ready about 0.2 seconds after bhyve starts.

@@ -1,0 +1,9 @@
+# Installed by sysutils/ocibhyve. podman reads every *.conf in this
+# directory after containers.conf, so "podman --runtime ocibhyve" finds
+# the runtime by name. The append keeps the other runtimes in the list.
+
+[engine]
+runtime_supports_json = ["ocibhyve", {append=true}]
+
+[engine.runtimes]
+ocibhyve = ["%%PREFIX%%/bin/ocibhyve"]
