@@ -445,5 +445,6 @@
     SUBDIR += xorg-fonts-miscbitmaps
     SUBDIR += xorg-fonts-truetype
     SUBDIR += xorg-fonts-type1
+    SUBDIR += young-serif
 
 .include <bsd.port.subdir.mk>
