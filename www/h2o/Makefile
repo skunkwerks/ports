@@ -1,5 +1,5 @@
 PORTNAME=	h2o
-DISTVERSION=	20261109
+DISTVERSION=	20261120
 CATEGORIES=	www
 
 MAINTAINER=	dch@FreeBSD.org
@@ -20,7 +20,7 @@ LIB_DEPENDS=	libbrotlidec.so:archivers/brotli \
 USES=		cmake compiler:c11 cpe pathfix perl5 pkgconfig shebangfix ssl
 CPE_VENDOR=	dena
 USE_GITHUB=	yes
-GH_TAGNAME=	436163489f65be5cf0d08f1c14fa07ae4f9b8b88
+GH_TAGNAME=	99bf2c304c9ab3f8d749334b1f39708d377d1621
 USE_LDCONFIG=	YES
 USE_RC_SUBR=	${PORTNAME}
 
