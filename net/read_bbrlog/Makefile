@@ -10,7 +10,7 @@ WWW=		https://github.com/Netflix/read_bbrlog
 LICENSE=	BSD2CLAUSE
 LICENSE_FILE=	${WRKSRC}/LICENSE
 
-ONLY_FOR_ARCHS=	amd64
+ONLY_FOR_ARCHS=	amd64 aarch64
 
 BUILD_DEPENDS=	${PREFIX}/include/bbparse.h:devel/bbparse
 
