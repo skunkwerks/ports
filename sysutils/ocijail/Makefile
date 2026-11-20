@@ -1,6 +1,7 @@
 PORTNAME=	ocijail
 DISTVERSIONPREFIX=	v
 DISTVERSION=	0.6.1
+PORTREVISION=	1
 CATEGORIES=	sysutils
 
 MAINTAINER=	dfr@FreeBSD.org
@@ -10,18 +11,19 @@ WWW=		https://github.com/dfr/ocijail
 LICENSE=	BSD2CLAUSE
 LICENSE_FILE=	${WRKSRC}/LICENSE
 
-BUILD_DEPENDS=	bazel:devel/bazel5 bash:shells/bash
+BUILD_DEPENDS=	cli11>0:devel/cli11 \
+		nlohmann-json>=3.11:devel/nlohmann-json
+
+USES=		compiler:c++20-lang meson pkgconfig
 
 USE_GITHUB=	yes
 GH_ACCOUNT=	dfr
 
 PLIST_FILES=	bin/ocijail
 
-# Build happens in the //:install rule
-NO_BUILD=	yes
-BAZEL_OPTS=	--batch --output_user_root=${WRKDIR}/bazel_out
-
-do-install:
-	cd ${WRKSRC} && bazel ${BAZEL_OPTS} run --experimental_repository_disable_download //:install -- ${STAGEDIR}${PREFIX}/bin
+# Upstream builds with Bazel. Until a release ships this meson.build, the
+# port brings its own.
+post-extract:
+	${CP} ${FILESDIR}/meson.build ${WRKSRC}/
 
 .include <bsd.port.mk>
