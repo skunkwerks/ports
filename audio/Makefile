@@ -680,6 +680,7 @@
     SUBDIR += py-soundscrape
     SUBDIR += py-soxr
     SUBDIR += py-speechrecognition
+    SUBDIR += py-sphn
     SUBDIR += py-spotipy
     SUBDIR += py-standard-aifc
     SUBDIR += py-supysonic

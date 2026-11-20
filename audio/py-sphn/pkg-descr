@@ -1,0 +1,3 @@
+sphn is a Python module written in Rust for audio file handling. It
+decodes and encodes common audio formats, reads and writes Ogg Opus
+streams, and resamples audio, returning numpy arrays.
