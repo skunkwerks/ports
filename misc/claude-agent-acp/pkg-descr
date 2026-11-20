@@ -1,0 +1,7 @@
+claude-agent-acp exposes Claude Code over the Agent Client Protocol, the
+editor/agent interface used by Zed, Marimo, Tidewave and JetBrains IDEs, so
+any ACP client can drive Claude Code as its coding agent.
+
+Upstream ships it as a Bun single-file executable, which has no FreeBSD
+build. This port bundles the same JavaScript into a NodeJS single executable
+application instead, and drives the claude binary from misc/claude-code.

@@ -54,6 +54,7 @@
     SUBDIR += chmlib
     SUBDIR += chrono
     SUBDIR += cinnamon-translations
+    SUBDIR += claude-agent-acp
     SUBDIR += claude-code
     SUBDIR += claude-code-legacy
     SUBDIR += clawhub
