@@ -1,0 +1,12 @@
+BandcampSync is a Python module and command line script which synchronises
+media purchased on a Bandcamp account with a local directory, for use with
+a local media server such as Plex or Jellyfin.
+
+Using exported session cookies it authenticates as you, indexes your
+collection, downloads any purchased items missing locally, and unpacks them
+into an "artist name/item title" directory tree. Downloads default to flac
+where available, and a checkpoint file in the media directory keeps
+subsequent runs incremental.
+
+Both a one-shot "bandcampsync" command and a long running
+"bandcampsync-service" daemon are installed.

@@ -640,6 +640,7 @@
     SUBDIR += py-audioop-lts
     SUBDIR += py-audioread
     SUBDIR += py-auditok
+    SUBDIR += py-bandcampsync
     SUBDIR += py-discid
     SUBDIR += py-discogs-client
     SUBDIR += py-edge-tts
