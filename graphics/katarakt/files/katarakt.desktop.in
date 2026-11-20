@@ -1,0 +1,11 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Katarakt PDF Viewer
+GenericName=Viewer for PDFs
+Comment=Viewer for PDF
+TryExec=katarakt
+Exec=katarakt %f
+Icon=document-viewer
+Categories=Office;Viewer;
+MimeType=application/pdf;
