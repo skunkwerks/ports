@@ -1,0 +1,10 @@
+--- Cargo.toml.orig	2026-09-15 10:01:27 UTC
++++ Cargo.toml
+@@ -8,7 +8,3 @@ version = "1.1.0"
+ 
+ [workspace.package]
+ version = "1.1.0"
+-
+-[patch.crates-io]
+-# TODO: upstream
+-tao = { git = "https://github.com/wojtekmach/tao.git", branch = "wm-bundled-activation-policy" }

@@ -281,6 +281,7 @@
     SUBDIR += terminal-image-viewer
     SUBDIR += thinkingrock
     SUBDIR += thokr
+    SUBDIR += tidewave-app
     SUBDIR += timewarrior
     SUBDIR += todo
     SUBDIR += todour
