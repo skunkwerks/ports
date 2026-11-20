@@ -1,0 +1,4 @@
+Julius provides digital signal processing routines written for PyTorch:
+band limited resampling, FFT based convolutions, low pass, high pass and
+band pass filters, and splitting a signal into frequency bands. All of
+them are differentiable and run on CPU or GPU.

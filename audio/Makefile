@@ -650,6 +650,7 @@
     SUBDIR += py-fmoo-audiotools
     SUBDIR += py-gtts
     SUBDIR += py-hsaudiotag3k
+    SUBDIR += py-julius
     SUBDIR += py-librosa
     SUBDIR += py-mpd
     SUBDIR += py-music21
