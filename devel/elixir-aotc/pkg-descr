@@ -1,0 +1,41 @@
+elixiraotc compiles an Elixir script (.exs) into a single, self-contained
+native executable. The result embeds a statically linked, JIT-enabled
+Erlang/OTP emulator plus the Elixir, Mix, IEx and Hex libraries, so it runs
+on a machine with no Erlang or Elixir installed. The BEAM code is compiled
+ahead of time and recorded into the executable, so startup skips the usual
+JIT warm-up.
+
+Usage
+
+    elixiraotc build hello.exs -o hello
+    ./hello
+
+`build` compiles hello.exs into the executable `hello`. `run FILE.exs [ARG]`
+builds to a temporary file, executes it with the given arguments and discards
+it.
+
+What is embedded, and when
+
+The executable embeds the runtime and the standard library: the OTP emulator,
+Elixir, Mix, IEx and Hex. It does not embed the dependencies referenced by the
+script.
+
+`Mix.install/2` is not evaluated while the script is compiled, so a script
+that uses it compiles with warnings that its `Mix.install/2`-provided modules
+are undefined. That is expected. The call runs when the resulting executable
+runs, at which point Mix downloads and compiles those dependencies from Hex
+exactly as `elixir` would on first use, so that first run still needs network
+access (or a pre-warmed ~/.hex / ~/.mix cache). Scripts that avoid
+`Mix.install/2` run fully offline.
+
+Examples under %%PREFIX%%/share/examples/elixiraotc/:
+
+    hello.exs    dependency-free; runs fully offline
+    nanoid.exs   uses Mix.install/2; fetches nanoid from Hex on first run
+
+    static_nif/  C and rustler NIFs linked statically via `elixiraotc build
+                 FILE.exs --native NATIVE.json`; see static_nif/README.md
+
+This port reproduces the upstream single-binary build from the pinned
+Erlang/OTP and Elixir commits, rebuilding every patched preloaded module from
+source rather than shipping precompiled artifacts.

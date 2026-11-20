@@ -1,0 +1,2082 @@
+diff --git a/Makefile.in b/Makefile.in
+index e0981b1d9a..4a15dabc9b 100644
+--- a/Makefile.in
++++ b/Makefile.in
+@@ -127,7 +127,7 @@ BINDIR      = $(DESTDIR)$(EXTRA_PREFIX)$(bindir)
+ #
+ # Erlang base public files
+ #
+-ERL_BASE_PUB_FILES=erl erlc epmd run_erl to_erl dialyzer typer escript ct_run
++ERL_BASE_PUB_FILES=erl erlc epmd run_erl to_erl dialyzer typer escript ct_run erlaotc
+ 
+ # ERLANG_INST_LIBDIR is the top directory where the Erlang installation
+ # will be located when running.
+diff --git a/erts/Makefile b/erts/Makefile
+index 47737cda43..5658d6b195 100644
+--- a/erts/Makefile
++++ b/erts/Makefile
+@@ -80,6 +80,7 @@ local_setup:
+ 		$(ERL_TOP)/bin/dialyzer $(ERL_TOP)/bin/dialyzer.exe \
+ 		$(ERL_TOP)/bin/typer $(ERL_TOP)/bin/typer.exe \
+ 		$(ERL_TOP)/bin/ct_run $(ERL_TOP)/bin/ct_run.exe \
++		$(ERL_TOP)/bin/erlaotc \
+ 		$(ERL_TOP)/bin/start*.boot $(ERL_TOP)/bin/start*.script
+ 	@if [ "X$(TARGET)" = "Xwin32" ]; then \
+ 		cp $(ERL_TOP)/bin/$(TARGET)/dialyzer.exe $(ERL_TOP)/bin/dialyzer.exe; \
+@@ -105,6 +106,9 @@ local_setup:
+ 		-e "s;%VSN%;$(VSN);"    \
+ 		-e "s;%DYN_ERL_PATH%;$(TARGET)/dyn_erl;" \
+ 	        $(ERL_TOP)/erts/etc/unix/cerl.src > $(ERL_TOP)/bin/cerl; \
++	sed	-e "s;%FINAL_ROOTDIR%;$(ERL_TOP);"   \
++		-e "s;erts-.*/bin;bin/$(TARGET);"    \
++	        $(ERL_TOP)/erts/etc/unix/erlaotc.src > $(ERL_TOP)/bin/erlaotc; \
+ 		cp $(ERL_TOP)/bin/$(TARGET)/erl_call $(ERL_TOP)/bin/erl_call; \
+ 		cp $(ERL_TOP)/bin/$(TARGET)/dialyzer $(ERL_TOP)/bin/dialyzer; \
+ 		cp $(ERL_TOP)/bin/$(TARGET)/typer $(ERL_TOP)/bin/typer; \
+@@ -112,7 +116,7 @@ local_setup:
+ 		cp $(ERL_TOP)/bin/$(TARGET)/erlc $(ERL_TOP)/bin/erlc; \
+ 		cp $(ERL_TOP)/bin/$(TARGET)/escript $(ERL_TOP)/bin/escript; \
+ 	 	chmod 755 $(ERL_TOP)/bin/erl $(ERL_TOP)/bin/erlc \
+-			$(ERL_TOP)/bin/cerl; \
++			$(ERL_TOP)/bin/cerl $(ERL_TOP)/bin/erlaotc; \
+ 	fi
+ 	@cd start_scripts && $(MAKE) $(ERL_TOP)/bin/start.script \
+ 		$(ERL_TOP)/bin/start_sasl.script \
+diff --git a/erts/emulator/Makefile.in b/erts/emulator/Makefile.in
+index 028e2bcafc..87c7271403 100644
+--- a/erts/emulator/Makefile.in
++++ b/erts/emulator/Makefile.in
+@@ -1069,6 +1069,25 @@ update_asmjit:
+ #
+ CS_OBJ = $(OBJDIR)/erl_child_setup.o $(OBJDIR)/sys_uds.o $(OBJDIR)/hash.o
+ 
++EMBED_FLAGS = -include sys/unix/erl_helpers.h
++$(OBJDIR)/erl_child_setup_embedded.o: sys/unix/erl_child_setup.c
++	$(V_CC) $(CFLAGS) $(INCLUDES) $(EMBED_FLAGS) -Dmain=erl_child_setup_main \
++	  -Dsys_sigblock=erl_child_setup_sigblock \
++	  -Dsys_sigrelease=erl_child_setup_sigrelease -c $< -o $@
++
++$(OBJDIR)/inet_gethost_embedded.o: ../etc/common/inet_gethost.c
++	$(V_CC) $(CFLAGS) $(INCLUDES) $(EMBED_FLAGS) -Dmain=inet_gethost_main -c $< -o $@
++
++include ../epmd/epmd.mk
++EPMD_EMBED_FLAGS = $(EMBED_FLAGS) -I../epmd/src -DEPMD_PORT_NO=$(EPMD_PORT_NO) \
++  -Dmain=epmd_main
++$(OBJDIR)/epmd_embedded.o: ../epmd/src/epmd.c
++	$(V_CC) $(CFLAGS) $(INCLUDES) $(EPMD_EMBED_FLAGS) -c $< -o $@
++$(OBJDIR)/epmd_cli_embedded.o: ../epmd/src/epmd_cli.c
++	$(V_CC) $(CFLAGS) $(INCLUDES) $(EPMD_EMBED_FLAGS) -c $< -o $@
++$(OBJDIR)/epmd_srv_embedded.o: ../epmd/src/epmd_srv.c
++	$(V_CC) $(CFLAGS) $(INCLUDES) $(EPMD_EMBED_FLAGS) -c $< -o $@
++
+ $(BINDIR)/$(CS_EXECUTABLE): $(TTF_DIR)/GENERATED $(PRELOAD_SRC) $(CS_OBJ) $(ERTS_LIB)
+ 	$(ld_verbose) $(LD) $(CS_LDFLAGS) -o $(BINDIR)/$(CS_EXECUTABLE) \
+                $(CS_CFLAGS) $(COMMON_INCLUDES) $(CS_OBJ) $(CS_LIBS)
+@@ -1212,6 +1231,7 @@ RUN_OBJS += \
+ 	$(OBJDIR)/erl_bif_re.o		$(OBJDIR)/erl_unicode.o \
+ 	$(OBJDIR)/packet_parser.o	$(OBJDIR)/safe_hash.o \
+ 	$(OBJDIR)/erl_zlib.o		$(OBJDIR)/erl_nif.o \
++	$(OBJDIR)/erl_aot.o \
+ 	$(OBJDIR)/erl_bif_binary.o      $(OBJDIR)/erl_ao_firstfit_alloc.o \
+ 	$(OBJDIR)/erl_thr_queue.o	$(OBJDIR)/erl_sched_spec_pre_alloc.o \
+ 	$(OBJDIR)/erl_ptab.o		$(OBJDIR)/erl_map.o \
+@@ -1264,6 +1284,11 @@ OS_OBJS = \
+ 	$(OBJDIR)/sys_drivers.o \
+ 	$(OBJDIR)/sys_env.o \
+ 	$(OBJDIR)/sys_uds.o \
++	$(OBJDIR)/erl_child_setup_embedded.o \
++	$(OBJDIR)/inet_gethost_embedded.o \
++	$(OBJDIR)/epmd_embedded.o \
++	$(OBJDIR)/epmd_cli_embedded.o \
++	$(OBJDIR)/epmd_srv_embedded.o \
+ 	$(OBJDIR)/driver_tab.o \
+ 	$(OBJDIR)/unix_prim_file.o \
+ 	$(OBJDIR)/sys_float.o \
+diff --git a/erts/emulator/beam/erl_aot.c b/erts/emulator/beam/erl_aot.c
+new file mode 100644
+index 0000000000..ac7fb592c9
+--- /dev/null
++++ b/erts/emulator/beam/erl_aot.c
+@@ -0,0 +1,289 @@
++/*
++ * %CopyrightBegin%
++ *
++ * SPDX-License-Identifier: Apache-2.0
++ *
++ * Copyright Ericsson AB 2026. All Rights Reserved.
++ *
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ *
++ * %CopyrightEnd%
++ */
++
++/* Executables built by erlaotc: the emulator followed by a zip archive whose
++ * comment holds the arguments ("erlaotc <vsn>\n" then one per line, $ROOT
++ * being the executable). */
++
++#ifdef HAVE_CONFIG_H
++#  include "config.h"
++#endif
++
++#include "sys.h"
++#include "erl_aot.h"
++#include "erl_version.h"
++
++#ifndef __WIN32__
++
++#include <fcntl.h>
++#include <unistd.h>
++#include <sys/stat.h>
++#include <sys/wait.h>
++#include <errno.h>
++#include <limits.h>
++#ifdef __APPLE__
++#  include <mach-o/dyld.h>
++#endif
++
++#define MAGIC "erlaotc " ERLANG_VERSION "\n"
++#define ROOT_VAR "$ROOT"
++
++#define EOCD_SIZE 22
++#define EOCD_SIGNATURE 0x06054b50
++#define MAX_COMMENT_SIZE 65535
++
++static char exe_path[PATH_MAX];
++static int have_exe = 0;
++
++const char *erts_aot_exe_path(void)
++{
++    return have_exe ? exe_path : NULL;
++}
++
++const char *erts_aot_helper_marker(const char *program)
++{
++    static const char *helpers[][2] = {
++        {"inet_gethost", "-erlaot:inet_gethost"},
++        {"epmd", "-erlaot:epmd"},
++        {NULL, NULL}
++    };
++    size_t len = strlen(exe_path);
++    int i;
++
++    if (!have_exe || strncmp(program, exe_path, len) != 0 ||
++        strncmp(program + len, "/bin/", 5) != 0) {
++        return NULL;
++    }
++    program += len + 5;
++    for (i = 0; helpers[i][0] != NULL; i++) {
++        if (strcmp(program, helpers[i][0]) == 0)
++            return helpers[i][1];
++    }
++    return NULL;
++}
++
++static void fatal(const char *what, const char *arg)
++{
++    fprintf(stderr, "%s: %s: %s\n", exe_path, what, arg);
++    exit(1);
++}
++
++static void *xmalloc(size_t size)
++{
++    void *p = malloc(size);
++    if (p == NULL)
++        fatal("cannot allocate memory", "");
++    return p;
++}
++
++static int resolve_self_path(const char *argv0)
++{
++#if defined(__APPLE__)
++    char tmp[PATH_MAX];
++    uint32_t size = sizeof(tmp);
++    (void)argv0;
++    return _NSGetExecutablePath(tmp, &size) == 0 &&
++           realpath(tmp, exe_path) != NULL;
++#elif defined(__linux__)
++    ssize_t n = readlink("/proc/self/exe", exe_path, sizeof(exe_path) - 1);
++    (void)argv0;
++    if (n <= 0)
++        return 0;
++    exe_path[n] = '\0';
++    return 1;
++#else
++    return argv0 != NULL && strchr(argv0, '/') != NULL &&
++           realpath(argv0, exe_path) != NULL;
++#endif
++}
++
++static Uint32 get_le32(const unsigned char *p)
++{
++    return (Uint32)p[0] | ((Uint32)p[1] << 8) | ((Uint32)p[2] << 16) |
++           ((Uint32)p[3] << 24);
++}
++
++static char *read_comment(int fd, off_t file_size)
++{
++    unsigned char *tail;
++    size_t tail_size, i;
++    char *comment = NULL;
++
++    tail_size = MAX_COMMENT_SIZE + EOCD_SIZE;
++    if ((off_t)tail_size > file_size)
++        tail_size = (size_t)file_size;
++    if (tail_size < EOCD_SIZE)
++        return NULL;
++    tail = xmalloc(tail_size);
++    if (pread(fd, tail, tail_size, file_size - (off_t)tail_size) !=
++        (ssize_t)tail_size) {
++        free(tail);
++        return NULL;
++    }
++
++    for (i = tail_size - EOCD_SIZE + 1; i-- > 0; ) {
++        if (get_le32(tail + i) == EOCD_SIGNATURE &&
++            tail[i + 20] + (tail[i + 21] << 8) ==
++            (int)(tail_size - i - EOCD_SIZE)) {
++            size_t len = tail_size - i - EOCD_SIZE;
++            comment = xmalloc(len + 1);
++            memcpy(comment, tail + i + EOCD_SIZE, len);
++            comment[len] = '\0';
++            break;
++        }
++    }
++    free(tail);
++    return comment;
++}
++
++static char *expand_arg(const char *arg)
++{
++    if (strncmp(arg, ROOT_VAR, strlen(ROOT_VAR)) == 0) {
++        const char *rest = arg + strlen(ROOT_VAR);
++        char *res = xmalloc(strlen(exe_path) + strlen(rest) + 1);
++        strcpy(res, exe_path);
++        strcat(res, rest);
++        return res;
++    }
++    return (char *)arg;
++}
++
++/* As erl(1) does */
++static void maybe_start_epmd(int argc, char **argv)
++{
++    int distributed = 0, start_epmd = 1, i;
++    pid_t pid;
++    int status;
++
++    for (i = 1; i < argc; i++) {
++        if (strcmp(argv[i], "-sname") == 0 || strcmp(argv[i], "-name") == 0)
++            distributed = 1;
++        else if (strcmp(argv[i], "-start_epmd") == 0 && i + 1 < argc)
++            start_epmd = strcmp(argv[i + 1], "false") != 0;
++        else if (strcmp(argv[i], "-extra") == 0)
++            break;
++    }
++    if (!distributed || !start_epmd)
++        return;
++
++    pid = fork();
++    if (pid < 0)
++        fatal("cannot start epmd", strerror(errno));
++    if (pid == 0) {
++        execl(exe_path, exe_path, "-erlaot:epmd", "-daemon", (char *)NULL);
++        _exit(127);
++    }
++    while (waitpid(pid, &status, 0) < 0) {
++        if (errno != EINTR)
++            fatal("cannot start epmd", strerror(errno));
++    }
++    if (!WIFEXITED(status) || WEXITSTATUS(status) != 0)
++        fatal("cannot start epmd", "epmd failed");
++}
++
++void erts_aot_early_args(int *argc, char ***argv)
++{
++    struct stat st;
++    int fd, n, i;
++    char *comment, *line, *next;
++    char **args;
++    const char *env;
++
++    if (*argc < 1 || !resolve_self_path((*argv)[0]))
++        return;
++    fd = open(exe_path, O_RDONLY | O_CLOEXEC);
++    if (fd < 0)
++        return;
++    if (fstat(fd, &st) != 0 || !S_ISREG(st.st_mode)) {
++        close(fd);
++        return;
++    }
++    comment = read_comment(fd, st.st_size);
++    close(fd);
++    if (comment == NULL)
++        return;
++    if (strncmp(comment, "erlaotc ", 8) != 0) {
++        free(comment);
++        return;
++    }
++    if (strncmp(comment, MAGIC, strlen(MAGIC)) != 0)
++        fatal("the archive was built for another version of erts", comment);
++    have_exe = 1;
++
++    n = 0;
++    for (line = comment; *line != '\0'; line++) {
++        if (*line == '\n')
++            n++;
++    }
++    args = xmalloc(sizeof(char *) * (n + *argc + 8));
++    i = 0;
++    args[i++] = (*argv)[0];
++    for (line = comment + strlen(MAGIC); *line != '\0'; line = next) {
++        next = strchr(line, '\n');
++        if (next == NULL)
++            fatal("corrupt archive comment", line);
++        *next++ = '\0';
++        args[i++] = expand_arg(line);
++    }
++
++    /* As erl(1) */
++    env = getenv("HOME");
++    if (env != NULL && env[0] != '\0') {
++        args[i++] = "-home";
++        args[i++] = (char *)env;
++    }
++    env = getenv("ERL_EPMD_PORT");
++    if (env != NULL && env[0] != '\0') {
++        args[i++] = "-epmd_port";
++        args[i++] = (char *)env;
++    }
++
++    args[i++] = "-extra";
++    memcpy(args + i, *argv + 1, sizeof(char *) * (*argc - 1));
++    i += *argc - 1;
++    args[i] = NULL;
++
++    *argc = i;
++    *argv = args;
++    maybe_start_epmd(*argc, *argv);
++}
++
++#else /* __WIN32__ */
++
++void erts_aot_early_args(int *argc, char ***argv)
++{
++    (void)argc;
++    (void)argv;
++}
++
++const char *erts_aot_exe_path(void)
++{
++    return NULL;
++}
++
++const char *erts_aot_helper_marker(const char *program)
++{
++    (void)program;
++    return NULL;
++}
++
++#endif
+diff --git a/erts/emulator/beam/erl_aot.h b/erts/emulator/beam/erl_aot.h
+new file mode 100644
+index 0000000000..5ea99de1f3
+--- /dev/null
++++ b/erts/emulator/beam/erl_aot.h
+@@ -0,0 +1,33 @@
++/*
++ * %CopyrightBegin%
++ *
++ * SPDX-License-Identifier: Apache-2.0
++ *
++ * Copyright Ericsson AB 2026. All Rights Reserved.
++ *
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ *
++ * %CopyrightEnd%
++ */
++
++#ifndef __ERL_AOT_H__
++#define __ERL_AOT_H__
++
++void erts_aot_early_args(int *argc, char ***argv);
++
++const char *erts_aot_exe_path(void);
++
++/* <exe>/bin/<helper> is run as <exe> <marker> */
++const char *erts_aot_helper_marker(const char *program);
++
++#endif
+diff --git a/erts/emulator/beam/erl_init.c b/erts/emulator/beam/erl_init.c
+index 3d24646885..61c9f037c5 100644
+--- a/erts/emulator/beam/erl_init.c
++++ b/erts/emulator/beam/erl_init.c
+@@ -58,6 +58,7 @@
+ #include "erl_iolist.h"
+ #include "erl_debugger.h"
+ #include "erl_record.h"
++#include "erl_aot.h"
+ #include "erl_crash_dump.h"
+ 
+ #include "jit/beam_asm.h"
+@@ -1299,7 +1300,7 @@ erl_start(int argc, char **argv)
+     int have_break_handler = 1;
+     char envbuf[21]; /* enough for any 64-bit integer */
+     size_t envbufsz;
+-    int ncpu = early_init(&argc, argv);
++    int ncpu;
+     int proc_tab_sz = ERTS_DEFAULT_MAX_PROCESSES;
+     int port_tab_sz = ERTS_DEFAULT_MAX_PORTS;
+     int port_tab_sz_ignore_files = 0;
+@@ -1311,6 +1312,9 @@ erl_start(int argc, char **argv)
+     int node_tab_delete_delay = ERTS_NODE_TAB_DELAY_GC_DEFAULT;
+     ErtsDbSpinCount db_spin_count = ERTS_DB_SPNCNT_NORMAL;
+ 
++    erts_aot_early_args(&argc, &argv);
++    ncpu = early_init(&argc, argv);
++
+     /* Must be set up as early as possible for crash dump encryption to work
+      * properly. */
+     erl_crash_dump_init();
+diff --git a/erts/emulator/sys/unix/erl_helpers.h b/erts/emulator/sys/unix/erl_helpers.h
+new file mode 100644
+index 0000000000..bf14e216e4
+--- /dev/null
++++ b/erts/emulator/sys/unix/erl_helpers.h
+@@ -0,0 +1,32 @@
++/*
++ * %CopyrightBegin%
++ *
++ * SPDX-License-Identifier: Apache-2.0
++ *
++ * Copyright Ericsson AB 2026. All Rights Reserved.
++ *
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ *
++ * %CopyrightEnd%
++ */
++
++/* The helper programs linked into the emulator (see erl_main.c) */
++
++#ifndef __ERL_HELPERS_H__
++#define __ERL_HELPERS_H__
++
++int erl_child_setup_main(int argc, char **argv);
++int inet_gethost_main(int argc, char **argv);
++int epmd_main(int argc, char **argv);
++
++#endif
+diff --git a/erts/emulator/sys/unix/erl_main.c b/erts/emulator/sys/unix/erl_main.c
+index 2d1d60e3d1..7f8d4ded83 100644
+--- a/erts/emulator/sys/unix/erl_main.c
++++ b/erts/emulator/sys/unix/erl_main.c
+@@ -25,10 +25,22 @@
+ #include "sys.h"
+ #include "erl_vm.h"
+ #include "global.h"
++#include <string.h>
++#include "erl_helpers.h"
+ 
+ int
+ main(int argc, char **argv)
+ {
++    if (argc >= 2 && strcmp(argv[1], "-erlaot:child_setup") == 0) {
++        return erl_child_setup_main(argc - 1, argv + 1);
++    }
++    if (argc >= 2 && strcmp(argv[1], "-erlaot:inet_gethost") == 0) {
++        return inet_gethost_main(argc - 1, argv + 1);
++    }
++    if (argc >= 2 && strcmp(argv[1], "-erlaot:epmd") == 0) {
++        return epmd_main(argc - 1, argv + 1);
++    }
++
+     /* Must be done before we have a chance to spawn any scheduler threads. */
+     sys_init_signal_stack();
+ 
+diff --git a/erts/emulator/sys/unix/sys_drivers.c b/erts/emulator/sys/unix/sys_drivers.c
+index bdd6528412..5850fda985 100644
+--- a/erts/emulator/sys/unix/sys_drivers.c
++++ b/erts/emulator/sys/unix/sys_drivers.c
+@@ -78,6 +78,7 @@ static Eterm forker_port;
+ #include "sys_uds.h"
+ 
+ #include "erl_child_setup.h"
++#include "erl_aot.h"
+ 
+ #if defined IOV_MAX
+ #define MAXIOV IOV_MAX
+@@ -471,6 +472,7 @@ static void *add_spawn_env_block(const erts_osenv_t *env, struct iovec *iov,
+ static ErlDrvData spawn_start(ErlDrvPort port_num, char* name,
+                               SysDriverOpts* opts)
+ {
++    const char *aot_marker = NULL;
+ #define CMD_LINE_PREFIX_STR "exec "
+ #define CMD_LINE_PREFIX_STR_SZ (sizeof(CMD_LINE_PREFIX_STR) - 1)
+ 
+@@ -508,6 +510,10 @@ static ErlDrvData spawn_start(ErlDrvPort port_num, char* name,
+ 
+     if (opts->spawn_type == ERTS_SPAWN_EXECUTABLE) {
+ 	/* started with spawn_executable, not with spawn */
++        aot_marker = erts_aot_helper_marker(name);
++        if (aot_marker != NULL) {
++            name = (char *) erts_aot_exe_path();
++        }
+ 	len = strlen(name);
+ 	cmd_line = (char *) erts_alloc_fnf(ERTS_ALC_T_TMP, len + 1);
+ 	if (!cmd_line) {
+@@ -581,6 +587,8 @@ static ErlDrvData spawn_start(ErlDrvPort port_num, char* name,
+             } else {
+                 argv_len++;
+             }
++            if (aot_marker != NULL)
++                argv_len++;
+             iov_len += 1 + argv_len; /* num argvs including size int */
+         }
+ 
+@@ -649,11 +657,21 @@ static ErlDrvData spawn_start(ErlDrvPort port_num, char* name,
+                         io_vector[i].iov_base = opts->argv[j];
+                     io_vector[i].iov_len = strlen(io_vector[i].iov_base) + 1;
+                     buffsz += io_vector[i++].iov_len;
++                    if (j == 0 && aot_marker != NULL) {
++                        io_vector[i].iov_base = (void *) aot_marker;
++                        io_vector[i].iov_len = strlen(aot_marker) + 1;
++                        buffsz += io_vector[i++].iov_len;
++                    }
+                 }
+             } else {
+                 io_vector[i].iov_base = cmd_line;
+                 io_vector[i].iov_len = strlen(io_vector[i].iov_base) + 1;
+                 buffsz += io_vector[i++].iov_len;
++                if (aot_marker != NULL) {
++                    io_vector[i].iov_base = (void *) aot_marker;
++                    io_vector[i].iov_len = strlen(aot_marker) + 1;
++                    buffsz += io_vector[i++].iov_len;
++                }
+             }
+         }
+ 
+@@ -1600,6 +1618,13 @@ static ErlDrvData forker_start(ErlDrvPort port_num, char* name,
+ 
+     forker_port = erts_drvport2id(port_num);
+ 
++    if (erts_aot_exe_path() != NULL) {
++        child_setup_prog = erts_alloc(ERTS_ALC_T_CS_PROG_PATH,
++                                      strlen(erts_aot_exe_path()) + 1);
++        strcpy(child_setup_prog, erts_aot_exe_path());
++        goto have_child_setup;
++    }
++
+     res = erts_sys_explicit_8bit_getenv("BINDIR", bindir, &bindirsz);
+     if (res == 0) {
+         erts_exit(1, "Environment variable BINDIR is not set\n");
+@@ -1621,6 +1646,7 @@ static ErlDrvData forker_start(ErlDrvPort port_num, char* name,
+                   bindir,
+                   DIR_SEPARATOR_CHAR,
+                   CHILD_SETUP_PROG_NAME);
++have_child_setup:
+     if (socketpair(AF_UNIX, SOCK_STREAM, 0, fds) < 0) {
+         erts_exit(ERTS_ABORT_EXIT,
+                  "Could not open unix domain socket in spawn_init: %d\n",
+@@ -1635,14 +1661,19 @@ static ErlDrvData forker_start(ErlDrvPort port_num, char* name,
+ 
+     if (i == 0) {
+         /* The child */
+-        char *cs_argv[FORKER_ARGV_NO_OF_ARGS] =
+-            {CHILD_SETUP_PROG_NAME, NULL, NULL};
++        char *cs_argv[FORKER_ARGV_NO_OF_ARGS + 1] =
++            {CHILD_SETUP_PROG_NAME, NULL, NULL, NULL};
+         char buff[128];
+ 
+         erts_sched_bind_atfork_child(unbind);
+ 
+         snprintf(buff, 128, "%d", sys_max_files());
+         cs_argv[FORKER_ARGV_MAX_FILES] = buff;
++        if (erts_aot_exe_path() != NULL) {
++            cs_argv[0] = child_setup_prog;
++            cs_argv[1] = "-erlaot:child_setup";
++            cs_argv[2] = buff;
++        }
+ 
+         /* We preallocate fd 3 for the uds fd */
+         if (fds[1] != 3) {
+diff --git a/erts/etc/common/Makefile.in b/erts/etc/common/Makefile.in
+index a3958304de..7ad956fc31 100644
+--- a/erts/etc/common/Makefile.in
++++ b/erts/etc/common/Makefile.in
+@@ -196,11 +196,13 @@ INSTALL_EMBEDDED_PROGS += \
+ 	$(BINDIR)/dialyzer@EXEEXT@ \
+ 	$(BINDIR)/erlc@EXEEXT@ \
+ 	$(BINDIR)/escript@EXEEXT@ \
++	$(BINDIR)/erlaotc@EXEEXT@ \
+ 	$(BINDIR)/ct_run@EXEEXT@ \
+ 	$(BINDIR)/run_erl@EXEEXT@ \
+ 	$(BINDIR)/to_erl@EXEEXT@ \
+ 	$(BINDIR)/erl_call@EXEEXT@
+-INSTALL_EMBEDDED_DATA = $(UXETC)/start.src $(UXETC)/start_erl.src
++INSTALL_EMBEDDED_DATA = $(UXETC)/start.src $(UXETC)/start_erl.src \
++	$(UXETC)/erlaotc.src
+ INSTALL_TOP = Install
+ INSTALL_TOP_BIN = 
+ INSTALL_MISC = $(UXETC)/format_man_pages
+@@ -263,6 +265,7 @@ endif
+ 	rm -f $(ERL_TOP)/erts/obj*/$(TARGET)/erl_io.o
+ 	rm -f $(ERL_TOP)/erts/obj*/$(TARGET)/erlc.o
+ 	rm -f $(ERL_TOP)/erts/obj*/$(TARGET)/escript.o
++	rm -f $(ERL_TOP)/erts/obj*/$(TARGET)/erlaotc.o
+ 	rm -f $(ERL_TOP)/erts/obj*/$(TARGET)/heart.o
+ 	rm -f $(ERL_TOP)/erts/obj*/$(TARGET)/heart_config.o
+ 	rm -f $(ERL_TOP)/erts/obj*/$(TARGET)/inet_gethost.o
+@@ -496,6 +499,12 @@ $(BINDIR)/escript@EXEEXT@: $(OBJDIR)/escript.o $(ERTS_LIB)
+ $(OBJDIR)/escript.o: escript.c $(RC_GENERATED)
+ 	$(V_CC) $(CFLAGS) -o $@ -c escript.c
+ 
++$(BINDIR)/erlaotc@EXEEXT@: $(OBJDIR)/erlaotc.o $(ERTS_LIB)
++	$(ld_verbose) $(LD) $(LDFLAGS) -o $@ $(OBJDIR)/erlaotc.o -L$(OBJDIR) $(LIBS) $(ERTS_INTERNAL_LIBS)
++
++$(OBJDIR)/erlaotc.o: erlaotc.c $(RC_GENERATED)
++	$(V_CC) $(CFLAGS) -DERTS_VSN=\"$(VSN)\" -o $@ -c erlaotc.c
++
+ $(BINDIR)/ct_run@EXEEXT@: $(OBJDIR)/ct_run.o $(ERTS_LIB)
+ 	$(ld_verbose) $(LD) $(LDFLAGS) -o $@ $(OBJDIR)/ct_run.o -L$(OBJDIR) $(LIBS) $(ERTS_INTERNAL_LIBS)
+ 
+diff --git a/erts/etc/common/erlaotc.c b/erts/etc/common/erlaotc.c
+new file mode 100644
+index 0000000000..0f8f5e69a2
+--- /dev/null
++++ b/erts/etc/common/erlaotc.c
+@@ -0,0 +1,573 @@
++/*
++ * %CopyrightBegin%
++ *
++ * SPDX-License-Identifier: Apache-2.0
++ *
++ * Copyright Ericsson AB 2026. All Rights Reserved.
++ *
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ *
++ *     http://www.apache.org/licenses/LICENSE-2.0
++ *
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ *
++ * %CopyrightEnd%
++ */
++/*
++ * Purpose: erlaotc - build an executable from a release: the emulator plus
++ * a zip archive of lib/ and releases/.
++ */
++
++#include "etc_common.h"
++
++#include <dirent.h>
++#include <stdint.h>
++#include <sys/stat.h>
++
++#define EMULATOR "beam.smp"
++#define MAGIC "erlaotc " ERTS_VSN "\n"
++
++static const char *release_dirs[] = {"lib", "releases", NULL};
++
++/* Set here, or handled by erl(1) */
++static const char *rejected_args[] = {
++    "-root", "-bindir", "-progname", "-boot", "-config", "-primary_archive",
++    "-args_file", "-emu_args", "-emu_type", "-emu_flavor", "-env", "-epmd",
++    "-extra", "-heart", "-detached", "-compile", "-make", "-man", "-x",
++    "-version", NULL
++};
++
++typedef struct {
++    char **v;
++    int n;
++    int max;
++} args_t;
++
++typedef struct {
++    char *name;      /* name in the archive */
++    char *path;      /* path in the file system */
++    uint32_t crc;
++    uint32_t size;
++    uint32_t offset; /* of the local file header */
++} entry_t;
++
++static entry_t *entries;
++static int n_entries, max_entries;
++static uint32_t crc_table[256];
++
++static void error(const char *format, ...)
++{
++    va_list args;
++    fprintf(stderr, "erlaotc: ");
++    va_start(args, format);
++    vfprintf(stderr, format, args);
++    va_end(args);
++    fprintf(stderr, "\n");
++    exit(1);
++}
++
++static void usage(void)
++{
++    fprintf(stderr,
++            "Usage: erlaotc [-o Output] ReleaseDir [Arg ...]\n"
++            "\n"
++            "Builds an executable from the release in ReleaseDir. Arg ...\n"
++            "are arguments for erl(1), given in addition to those in\n"
++            "releases/Vsn/vm.args; $ROOT in them refers to the executable.\n");
++    exit(1);
++}
++
++static void *emalloc(size_t size)
++{
++    void *p = malloc(size);
++    if (p == NULL)
++        error("out of memory");
++    return p;
++}
++
++static void *erealloc(void *p, size_t size)
++{
++    p = realloc(p, size);
++    if (p == NULL)
++        error("out of memory");
++    return p;
++}
++
++static char *strsave(const char *s)
++{
++    char *p = emalloc(strlen(s) + 1);
++    strcpy(p, s);
++    return p;
++}
++
++static char *join(const char *a, const char *b)
++{
++    char *p = emalloc(strlen(a) + strlen(b) + 2);
++    sprintf(p, "%s/%s", a, b);
++    return p;
++}
++
++static void args_add(args_t *args, char *arg)
++{
++    if (args->n + 1 >= args->max) {
++        args->max = args->max ? args->max * 2 : 32;
++        args->v = erealloc(args->v, sizeof(char *) * args->max);
++    }
++    args->v[args->n++] = arg;
++    args->v[args->n] = NULL;
++}
++
++/* As -args_file of erl(1) */
++static void read_args_file(const char *path, args_t *args)
++{
++    FILE *f = fopen(path, "r");
++    char *buf = NULL;
++    size_t size = 0, len = 0, n;
++    char *p, *cur;
++    enum { Start, Build, SQuoted, DQuoted, Escape, Comment } state;
++
++    if (f == NULL)
++        error("cannot open %s: %s", path, strerror(errno));
++    do {
++        buf = erealloc(buf, size += 4096);
++        n = fread(buf + len, 1, size - len - 1, f);
++        len += n;
++    } while (n > 0);
++    if (ferror(f))
++        error("cannot read %s: %s", path, strerror(errno));
++    fclose(f);
++    buf[len] = '\0';
++
++    cur = emalloc(len + 1);
++    n = 0;
++    state = Start;
++    for (p = buf; ; p++) {
++        char c = *p;
++        switch (state) {
++        case Start:
++            if (c == '\0')
++                goto done;
++            if (c == '#')
++                state = Comment;
++            else if (!isspace((unsigned char)c)) {
++                p--;
++                state = Build;
++            }
++            break;
++        case Build:
++            if (c == '\0' || c == '#' || isspace((unsigned char)c)) {
++                cur[n] = '\0';
++                args_add(args, strsave(cur));
++                n = 0;
++                state = Start;
++                p--;
++            } else if (c == '"')
++                state = DQuoted;
++            else if (c == '\'')
++                state = SQuoted;
++            else if (c == '\\')
++                state = Escape;
++            else
++                cur[n++] = c;
++            break;
++        case DQuoted:
++        case SQuoted:
++            if (c == '\0')
++                error("%s: unterminated quote", path);
++            if (c == (state == DQuoted ? '"' : '\''))
++                state = Build;
++            else
++                cur[n++] = c;
++            break;
++        case Escape:
++            if (c == '\0')
++                error("%s: unterminated escape", path);
++            cur[n++] = c;
++            state = Build;
++            break;
++        case Comment:
++            if (c == '\0')
++                goto done;
++            if (c == '\n')
++                state = Start;
++            break;
++        }
++    }
++done:
++    free(cur);
++    free(buf);
++}
++
++static int is_flag(const char *arg)
++{
++    return (arg[0] == '-' || arg[0] == '+') && arg[1] != '\0';
++}
++
++/* As erl(1): +Flag and its values go to the emulator, the rest to init */
++static void split_args(args_t *in, args_t *emu, args_t *init)
++{
++    int i, j, emu_flag = 0;
++
++    for (i = 0; i < in->n; i++) {
++        char *arg = in->v[i];
++        if (strchr(arg, '\n') != NULL)
++            error("argument with a newline: %s", arg);
++        for (j = 0; rejected_args[j] != NULL; j++) {
++            if (strcmp(arg, rejected_args[j]) == 0)
++                error("%s cannot be given to an executable", arg);
++        }
++        if (arg[0] == '+' && arg[1] != '\0') {
++            arg[0] = '-';
++            args_add(emu, arg);
++            emu_flag = 1;
++        } else if (emu_flag && !is_flag(arg)) {
++            args_add(emu, arg);
++        } else {
++            args_add(init, arg);
++            emu_flag = 0;
++        }
++    }
++}
++
++static void crc_init(void)
++{
++    uint32_t i, j, c;
++    for (i = 0; i < 256; i++) {
++        c = i;
++        for (j = 0; j < 8; j++)
++            c = (c & 1) ? 0xedb88320u ^ (c >> 1) : c >> 1;
++        crc_table[i] = c;
++    }
++}
++
++static uint32_t crc32_update(uint32_t crc, const unsigned char *p, size_t n)
++{
++    crc = ~crc;
++    while (n-- > 0)
++        crc = crc_table[(crc ^ *p++) & 0xff] ^ (crc >> 8);
++    return ~crc;
++}
++
++static int cmp_names(const void *a, const void *b)
++{
++    return strcmp(*(char *const *)a, *(char *const *)b);
++}
++
++static void collect(const char *dir, const char *name)
++{
++    DIR *d = opendir(dir);
++    struct dirent *ent;
++    char **names = NULL;
++    int n = 0, max = 0, i;
++
++    if (d == NULL)
++        error("cannot read %s: %s", dir, strerror(errno));
++    while ((ent = readdir(d)) != NULL) {
++        if (strcmp(ent->d_name, ".") == 0 || strcmp(ent->d_name, "..") == 0)
++            continue;
++        if (n >= max)
++            names = erealloc(names, sizeof(char *) * (max += 64));
++        names[n++] = strsave(ent->d_name);
++    }
++    closedir(d);
++    qsort(names, n, sizeof(char *), cmp_names);
++
++    for (i = 0; i < n; i++) {
++        char *path = join(dir, names[i]);
++        char *ename = join(name, names[i]);
++        struct stat st;
++
++        if (stat(path, &st) != 0)
++            error("cannot stat %s: %s", path, strerror(errno));
++        if (S_ISDIR(st.st_mode)) {
++            collect(path, ename);
++            free(path);
++            free(ename);
++        } else if (S_ISREG(st.st_mode)) {
++            entry_t *e;
++            if (st.st_size > 0xffffffffu)
++                error("%s is too large", path);
++            if (n_entries >= max_entries)
++                entries = erealloc(entries, sizeof(entry_t) *
++                                   (max_entries += 256));
++            e = &entries[n_entries++];
++            e->name = ename;
++            e->path = path;
++            e->size = (uint32_t)st.st_size;
++        } else {
++            error("%s is neither a regular file nor a directory", path);
++        }
++        free(names[i]);
++    }
++    free(names);
++}
++
++static void put16(FILE *f, unsigned v)
++{
++    unsigned char b[2] = {v & 0xff, (v >> 8) & 0xff};
++    fwrite(b, 1, 2, f);
++}
++
++static void put32(FILE *f, uint32_t v)
++{
++    unsigned char b[4] = {v & 0xff, (v >> 8) & 0xff, (v >> 16) & 0xff,
++                          (v >> 24) & 0xff};
++    fwrite(b, 1, 4, f);
++}
++
++static void copy_file(FILE *out, const char *path, uint32_t *crc)
++{
++    FILE *in = fopen(path, "rb");
++    unsigned char buf[65536];
++    size_t n;
++
++    if (in == NULL)
++        error("cannot open %s: %s", path, strerror(errno));
++    *crc = 0;
++    while ((n = fread(buf, 1, sizeof(buf), in)) > 0) {
++        *crc = crc32_update(*crc, buf, n);
++        fwrite(buf, 1, n, out);
++    }
++    if (ferror(in))
++        error("cannot read %s: %s", path, strerror(errno));
++    fclose(in);
++}
++
++/* Uncompressed and with a fixed timestamp, so builds are reproducible */
++#define ZIP_TIME 0
++#define ZIP_DATE 0x21 /* 1980-01-01 */
++
++static void write_executable(const char *out_path, const char *emulator,
++                             args_t *emu_args, args_t *init_args)
++{
++    char *tmp_path = emalloc(strlen(out_path) + 5);
++    FILE *out;
++    long offset;
++    uint32_t cd_offset, cd_size;
++    int i;
++
++    sprintf(tmp_path, "%s.tmp", out_path);
++    out = fopen(tmp_path, "wb");
++    if (out == NULL)
++        error("cannot create %s: %s", tmp_path, strerror(errno));
++
++    {
++        uint32_t crc;
++        copy_file(out, emulator, &crc);
++    }
++
++    for (i = 0; i < n_entries; i++) {
++        entry_t *e = &entries[i];
++        uint32_t crc;
++
++        offset = ftell(out);
++        if (offset < 0 || offset > 0xffffffffL)
++            error("the executable would be too large");
++        e->offset = (uint32_t)offset;
++
++        put32(out, 0x04034b50);
++        put16(out, 20);          /* version needed to extract */
++        put16(out, 0x0800);      /* flags: UTF-8 names */
++        put16(out, 0);           /* method: stored */
++        put16(out, ZIP_TIME);
++        put16(out, ZIP_DATE);
++        put32(out, 0);           /* crc, see below */
++        put32(out, e->size);
++        put32(out, e->size);
++        put16(out, (unsigned)strlen(e->name));
++        put16(out, 0);           /* extra field length */
++        fwrite(e->name, 1, strlen(e->name), out);
++
++        copy_file(out, e->path, &crc);
++        e->crc = crc;
++        offset = ftell(out);
++        if (fseek(out, (long)e->offset + 14, SEEK_SET) != 0)
++            error("cannot write %s: %s", tmp_path, strerror(errno));
++        put32(out, crc);
++        if (fseek(out, offset, SEEK_SET) != 0)
++            error("cannot write %s: %s", tmp_path, strerror(errno));
++    }
++
++    offset = ftell(out);
++    if (offset < 0 || offset > 0xffffffffL)
++        error("the executable would be too large");
++    cd_offset = (uint32_t)offset;
++    for (i = 0; i < n_entries; i++) {
++        entry_t *e = &entries[i];
++        put32(out, 0x02014b50);
++        put16(out, 20);          /* version made by */
++        put16(out, 20);          /* version needed to extract */
++        put16(out, 0x0800);
++        put16(out, 0);
++        put16(out, ZIP_TIME);
++        put16(out, ZIP_DATE);
++        put32(out, e->crc);
++        put32(out, e->size);
++        put32(out, e->size);
++        put16(out, (unsigned)strlen(e->name));
++        put16(out, 0);           /* extra field length */
++        put16(out, 0);           /* file comment length */
++        put16(out, 0);           /* disk number start */
++        put16(out, 0);           /* internal attributes */
++        put32(out, 0);           /* external attributes */
++        put32(out, e->offset);
++        fwrite(e->name, 1, strlen(e->name), out);
++    }
++    offset = ftell(out);
++    if (offset < 0 || offset > 0xffffffffL)
++        error("the executable would be too large");
++    cd_size = (uint32_t)offset - cd_offset;
++
++    {
++        size_t comment_size = strlen(MAGIC);
++        for (i = 0; i < emu_args->n; i++)
++            comment_size += strlen(emu_args->v[i]) + 1;
++        comment_size += 3; /* "--\n" */
++        for (i = 0; i < init_args->n; i++)
++            comment_size += strlen(init_args->v[i]) + 1;
++        if (comment_size > 0xffff)
++            error("the arguments are too long");
++
++        put32(out, 0x06054b50);
++        put16(out, 0);           /* this disk */
++        put16(out, 0);           /* disk with the central directory */
++        put16(out, (unsigned)n_entries);
++        put16(out, (unsigned)n_entries);
++        put32(out, cd_size);
++        put32(out, cd_offset);
++        put16(out, (unsigned)comment_size);
++        fputs(MAGIC, out);
++        for (i = 0; i < emu_args->n; i++)
++            fprintf(out, "%s\n", emu_args->v[i]);
++        fputs("--\n", out);
++        for (i = 0; i < init_args->n; i++)
++            fprintf(out, "%s\n", init_args->v[i]);
++    }
++
++    if (fflush(out) != 0 || ferror(out))
++        error("cannot write %s: %s", tmp_path, strerror(errno));
++    if (fchmod(fileno(out), 0755) != 0)
++        error("cannot chmod %s: %s", tmp_path, strerror(errno));
++    if (fclose(out) != 0)
++        error("cannot write %s: %s", tmp_path, strerror(errno));
++    if (rename(tmp_path, out_path) != 0)
++        error("cannot create %s: %s", out_path, strerror(errno));
++    free(tmp_path);
++}
++
++static char *bindir(const char *argv0)
++{
++    const char *env = getenv("BINDIR");
++    char *dir, *p;
++
++    if (env != NULL && env[0] != '\0')
++        return strsave(env);
++    dir = strsave(argv0);
++    p = strrchr(dir, '/');
++    if (p == NULL)
++        error("BINDIR is not set");
++    *p = '\0';
++    return dir;
++}
++
++static char *release_version(const char *release_dir)
++{
++    char *path = join(release_dir, "releases/start_erl.data");
++    FILE *f = fopen(path, "r");
++    char erts_vsn[64], rel_vsn[256];
++
++    if (f == NULL)
++        error("cannot open %s: %s", path, strerror(errno));
++    if (fscanf(f, "%63s %255s", erts_vsn, rel_vsn) != 2)
++        error("%s: expected \"ErtsVsn RelVsn\"", path);
++    fclose(f);
++    if (strcmp(erts_vsn, ERTS_VSN) != 0)
++        error("the release is for erts %s, this is erts %s", erts_vsn,
++              ERTS_VSN);
++    free(path);
++    return strsave(rel_vsn);
++}
++
++int main(int argc, char **argv)
++{
++    const char *out_path = NULL;
++    char *release_dir, *emulator, *rel_vsn, *path;
++    char release_path[MAXPATHLEN];
++    args_t in = {0}, emu = {0}, init = {0};
++    struct stat st;
++    int i;
++
++    for (i = 1; i < argc && argv[i][0] == '-'; i++) {
++        if (strcmp(argv[i], "-o") == 0 && i + 1 < argc) {
++            out_path = argv[++i];
++        } else if (strcmp(argv[i], "--") == 0) {
++            i++;
++            break;
++        } else {
++            usage();
++        }
++    }
++    if (i >= argc)
++        usage();
++    release_dir = argv[i++];
++
++    emulator = join(bindir(argv[0]), EMULATOR);
++    if (stat(emulator, &st) != 0)
++        error("cannot find the emulator %s", emulator);
++
++    if (realpath(release_dir, release_path) == NULL)
++        error("%s: %s", release_dir, strerror(errno));
++    if (out_path == NULL) {
++        char *base = strrchr(release_path, '/');
++        out_path = strsave(base != NULL && base[1] != '\0' ? base + 1
++                                                            : release_path);
++    }
++    rel_vsn = release_version(release_path);
++
++    path = emalloc(strlen(release_path) + strlen(rel_vsn) + 32);
++    sprintf(path, "%s/releases/%s/vm.args", release_path, rel_vsn);
++    if (stat(path, &st) == 0)
++        read_args_file(path, &in);
++    for (; i < argc; i++)
++        args_add(&in, argv[i]);
++    split_args(&in, &emu, &init);
++
++    args_add(&init, "-root");
++    args_add(&init, "$ROOT");
++    args_add(&init, "-bindir");
++    args_add(&init, "$ROOT/bin");
++    args_add(&init, "-progname");
++    args_add(&init, "$ROOT");
++    args_add(&init, "-primary_archive");
++    args_add(&init, "$ROOT");
++    args_add(&init, "-boot");
++    sprintf(path, "$ROOT/releases/%s/start", rel_vsn);
++    args_add(&init, strsave(path));
++    sprintf(path, "%s/releases/%s/sys.config", release_path, rel_vsn);
++    if (stat(path, &st) == 0) {
++        args_add(&init, "-config");
++        sprintf(path, "$ROOT/releases/%s/sys", rel_vsn);
++        args_add(&init, strsave(path));
++    }
++
++    crc_init();
++    for (i = 0; release_dirs[i] != NULL; i++) {
++        char *dir = join(release_path, release_dirs[i]);
++        if (stat(dir, &st) != 0 || !S_ISDIR(st.st_mode))
++            error("%s is not a release: no %s directory", release_path,
++                  release_dirs[i]);
++        collect(dir, release_dirs[i]);
++        free(dir);
++    }
++    if (n_entries > 0xffff)
++        error("too many files in the release");
++
++    write_executable(out_path, emulator, &emu, &init);
++    return 0;
++}
+diff --git a/erts/etc/unix/Install.src b/erts/etc/unix/Install.src
+index 45f75c0e49..553fe0a405 100644
+--- a/erts/etc/unix/Install.src
++++ b/erts/etc/unix/Install.src
+@@ -88,6 +88,14 @@ chmod 755 erl
+      start.src > start;
+   chmod 755 start)
+ 
++#
++# Create the erlaotc script, which runs erts-%I_VSN%/bin/erlaotc
++#
++sed -e "s;%FINAL_ROOTDIR%;$TARGET_ERL_ROOT;" \
++    -e "s;%VSN%;%I_VSN%;" \
++    erlaotc.src > "$ERL_ROOT/bin/erlaotc"
++chmod 755 "$ERL_ROOT/bin/erlaotc"
++
+ cd "$ERL_ROOT/bin"
+ 
+ cp -p "$ERL_ROOT/erts-%I_VSN%/bin/erl" .
+diff --git a/erts/etc/unix/erlaotc.src b/erts/etc/unix/erlaotc.src
+new file mode 100644
+index 0000000000..595a1a7ec6
+--- /dev/null
++++ b/erts/etc/unix/erlaotc.src
+@@ -0,0 +1,54 @@
++#!/bin/sh
++#
++# %CopyrightBegin%
++#
++# SPDX-License-Identifier: Apache-2.0
++#
++# Copyright Ericsson AB 2026. All Rights Reserved.
++#
++# Licensed under the Apache License, Version 2.0 (the "License");
++# you may not use this file except in compliance with the License.
++# You may obtain a copy of the License at
++#
++#     http://www.apache.org/licenses/LICENSE-2.0
++#
++# Unless required by applicable law or agreed to in writing, software
++# distributed under the License is distributed on an "AS IS" BASIS,
++# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++# See the License for the specific language governing permissions and
++# limitations under the License.
++#
++# %CopyrightEnd%
++#
++
++absolute_parent() {
++    DIR=$(dirname "${1}");
++    (cd "$DIR" && pwd -P || echo "/");
++}
++
++find_rootdir() {
++    CANDIDATE="${1}";
++    while
++        CANDIDATE=$(absolute_parent "$CANDIDATE");
++        [ "$CANDIDATE" != "/" ] && [ ! -d "$CANDIDATE/erts-%VSN%" ];
++    do :; done;
++
++    if [ "$CANDIDATE" != "/" ]
++    then
++        # It is likely that the files have been copied or moved
++        echo "$CANDIDATE";
++    else
++        echo "${2}";
++    fi
++}
++
++if [ -z "$ERL_ROOTDIR" ]
++then
++    ROOTDIR=$(find_rootdir "$0" "%FINAL_ROOTDIR%")
++else
++    ROOTDIR="$ERL_ROOTDIR"
++fi
++
++BINDIR="$ROOTDIR/erts-%VSN%/bin"
++export BINDIR
++exec "$BINDIR/erlaotc" ${1+"$@"}
+diff --git a/erts/preloaded/src/erl_prim_loader.erl b/erts/preloaded/src/erl_prim_loader.erl
+index 0c472fa9e3..6db7dfde13 100644
+--- a/erts/preloaded/src/erl_prim_loader.erl
++++ b/erts/preloaded/src/erl_prim_loader.erl
+@@ -210,7 +210,7 @@ start_efile(Parent) ->
+                     data = noport,
+                     timeout = ?EFILE_IDLE_TIMEOUT,
+                     prim_state = PS},
+-    set_loader_config({efile, PS#prim_state.primary_archive}),
++    set_loader_config({efile, PS#prim_state.primary_archive, undefined}),
+     loop(State, Parent, []).
+ 
+ init_ack(Pid) ->
+@@ -262,7 +262,22 @@ information about archive files, see `m:code`.
+ get_file(File) when is_atom(File) ->
+     get_file(atom_to_list(File));
+ get_file(File) ->
+-    check_file_result(get_file, File, request({get_file,File})).
++    Res = case get_loader_config() of
++              {efile, _, _} ->
++                  case is_basename(File) of
++                      true ->
++                          %% Searched for in the path
++                          request({get_file,File});
++                      false ->
++                          case client_or_request(read_file, File) of
++                              {ok,Bin} -> {ok,Bin,File};
++                              Error -> Error
++                          end
++                  end;
++              inet ->
++                  request({get_file,File})
++          end,
++    check_file_result(get_file, File, Res).
+ 
+ -doc """
+ Lists all the files in a directory.
+@@ -344,7 +359,7 @@ read_link_info(File) ->
+ get_cwd() ->
+     Res =
+         case get_loader_config() of
+-            {efile, _} -> prim_file:get_cwd();
++            {efile, _, _} -> prim_file:get_cwd();
+             inet -> request({get_cwd,[]})
+         end,
+     check_file_result(get_cwd, [], Res).
+@@ -354,22 +369,25 @@ get_cwd() ->
+ get_cwd(Drive) ->
+     Res =
+         case get_loader_config() of
+-            {efile, _} -> prim_file:get_cwd(Drive);
++            {efile, _, _} -> prim_file:get_cwd(Drive);
+             inet -> request({get_cwd,[Drive]})
+         end,
+     check_file_result(get_cwd, Drive, Res).
+ 
++%% ArchiveBin `undefined' reads the archive from File itself, whose zip
++%% offsets must then be relative to the start of File.
+ -doc false.
+--spec set_primary_archive(File :: string() | 'undefined', 
++-spec set_primary_archive(File :: string() | 'undefined',
+ 			  ArchiveBin :: binary() | 'undefined',
+ 			  FileInfo :: #file_info{} | 'undefined',
+-			  ParserFun :: fun())
++			  ParserFun :: fun() | 'undefined')
+ 			 -> {ok, [string()]} | {error,_}.
+ 
+ set_primary_archive(undefined, undefined, undefined, ParserFun) ->
+     request({set_primary_archive, undefined, undefined, undefined, ParserFun});
+ set_primary_archive(File, ArchiveBin, FileInfo, ParserFun)
+-  when is_list(File), is_binary(ArchiveBin), is_record(FileInfo, file_info) ->
++  when is_list(File), is_binary(ArchiveBin) orelse ArchiveBin =:= undefined,
++       is_record(FileInfo, file_info) ->
+     request({set_primary_archive, File, ArchiveBin, FileInfo, ParserFun}).
+ 
+ %% NOTE: Does not close the primary archive. Only closes all
+@@ -412,15 +430,87 @@ request(Req) ->
+ 
+ client_or_request(Fun, File) ->
+     case get_loader_config() of
+-        {efile, PrimaryArchive} ->
++        {efile, PrimaryArchive, ClientIndex} ->
+             case name_split(PrimaryArchive, File) of
+-                {file, SplitFile} -> prim_file:Fun(SplitFile);
+-                {archive, _, _} = Archive -> request({Fun,Archive})
++                {file, SplitFile} ->
++                    prim_file:Fun(SplitFile);
++                {archive, _, FileInArchive} = Archive ->
++                    case client_archive(Fun, PrimaryArchive, FileInArchive,
++                                        ClientIndex) of
++                        request -> request({Fun,Archive});
++                        Res -> Res
++                    end
+             end;
+         inet ->
+             request({Fun,File})
+     end.
+ 
++%% Reads from the primary archive in the calling process, as the round trip
++%% to the loader process costs more than the read.
++client_archive(_Fun, _Archive, _FileInArchive, undefined) ->
++    request;
++client_archive(_Fun, _Archive, [], _ClientIndex) ->
++    request; % the archive itself
++client_archive(Fun, Archive, FileInArchive, {Files, Dirs, Mtime}) ->
++    case prim_file:read_file_info(Archive) of
++        {ok, #file_info{mtime = Mtime}} ->
++            Components = path_split(FileInArchive),
++            case Fun of
++                read_file ->
++                    case Files of
++                        #{Components := {_FI, undefined}} ->
++                            {ok, <<>>}; % a directory
++                        #{Components := {_FI, Location}} ->
++                            client_read(Archive, Mtime, FileInArchive,
++                                        Location);
++                        #{} ->
++                            {error, enoent}
++                    end;
++                list_dir ->
++                    case Dirs of
++                        #{Components := Names} -> {ok, Names};
++                        #{} -> {error, enotdir}
++                    end;
++                _ when Fun =:= read_file_info; Fun =:= read_link_info ->
++                    DirComponents = ["" | Components],
++                    case Files of
++                        #{Components := {FI, _}} -> {ok, FI};
++                        #{DirComponents := {FI, _}} -> {ok, FI};
++                        #{} -> {error, enoent}
++                    end
++            end;
++        _ ->
++            request
++    end.
++
++client_read(Archive, Mtime, FileInArchive, {Offset, Size, _CompMethod}) ->
++    Key = {?MODULE, Archive},
++    Fd = case get(Key) of
++             {Mtime, Fd0} ->
++                 Fd0;
++             Old ->
++                 case Old of
++                     {_OldMtime, OldFd} -> prim_file:close(OldFd);
++                     undefined -> ok
++                 end,
++                 {ok, Fd0} = prim_file:open(Archive, [read, binary, raw]),
++                 put(Key, {Mtime, Fd0}),
++                 Fd0
++         end,
++    case prim_file:pread(Fd, Offset, Size) of
++        {ok, Bin} ->
++            try
++                {ok, prim_zip:read_z_file(FileInArchive, Bin)}
++            catch
++                throw:Reason ->
++                    {error, Reason}
++            end;
++        eof ->
++            {error, einval};
++        {error, _} = Error ->
++            Error
++    end.
++
+ check_file_result(_, _, {error,enoent}) ->
+     error;
+ check_file_result(_, _, {error,enotdir}) ->
+@@ -630,9 +720,17 @@ efile_set_primary_archive(#state{prim_state = PS} = State, File,
+ 			  ArchiveBin, FileInfo, ParserFun) ->
+     {Res, PS2} = prim_set_primary_archive(PS, File, ArchiveBin,
+ 					  FileInfo, ParserFun),
+-    set_loader_config({efile, PS2#prim_state.primary_archive}),
++    publish_primary_archive(PS2#prim_state.primary_archive),
+     {Res,State#state{prim_state = PS2}}.
+ 
++publish_primary_archive(undefined) ->
++    set_loader_config({efile, undefined, undefined});
++publish_primary_archive(ArchiveFile) ->
++    {primary, _PrimZip, {_Files, Dirs, ClientFiles}, FI, _ParserFun} =
++        get(ArchiveFile),
++    set_loader_config({efile, ArchiveFile,
++                       {ClientFiles, Dirs, FI#file_info.mtime}}).
++
+ efile_list_dir(#state{prim_state = PS} = State, Dir) ->
+     {Res, PS2} = prim_list_dir(PS, Dir),
+     {Res, State#state{prim_state = PS2}}.
+@@ -1047,7 +1145,7 @@ prim_purge_cache() ->
+ 
+ do_prim_purge_cache([{Key,Val}|T]) ->
+     case Val of
+-	{Cache,_FI} ->
++	{{ok, _, _} = Cache,_FI} ->
+ 	    catch clear_cache(Key, Cache);
+ 	_ ->
+ 	    ok
+@@ -1064,7 +1162,7 @@ prim_set_primary_archive(PS, undefined, undefined, undefined, _ParserFun) ->
+             debug(PS, {return, Res}),
+             {Res, PS};
+         ArchiveFile ->
+-            {primary, PrimZip, _FI, _ParserFun2} = erase(ArchiveFile),
++            {primary, PrimZip, _Index, _FI, _ParserFun2} = erase(ArchiveFile),
+             ok = prim_zip:close(PrimZip),
+             PS2 = PS#prim_state{primary_archive = undefined},
+             Res = {ok, []},
+@@ -1074,17 +1172,23 @@ prim_set_primary_archive(PS, undefined, undefined, undefined, _ParserFun) ->
+ 
+ prim_set_primary_archive(PS, ArchiveFile0, ArchiveBin,
+ 			 #file_info{} = FileInfo, ParserFun)
+-  when is_list(ArchiveFile0), is_binary(ArchiveBin) ->
++  when is_list(ArchiveFile0),
++       is_binary(ArchiveBin) orelse ArchiveBin =:= undefined ->
+     %% Try the archive file
+-    debug(PS, {set_primary_archive, ArchiveFile0, byte_size(ArchiveBin)}),
++    debug(PS, {set_primary_archive, ArchiveFile0,
++               case ArchiveBin of
++                   undefined -> file;
++                   _ -> byte_size(ArchiveBin)
++               end}),
+     ArchiveFile = real_path(absname(ArchiveFile0)),
+     {Res3, PS3} =
+         case PS#prim_state.primary_archive of
+             undefined ->
+                 case load_prim_archive(ArchiveFile, ArchiveBin, FileInfo) of
+-                    {ok, PrimZip, FI, Ebins} ->
++                    {ok, PrimZip, Index, FI, Ebins} ->
+                         debug(PS, {set_primary_archive, Ebins}),
+-                        put(ArchiveFile, {primary, PrimZip, FI, ParserFun}),
++                        put(ArchiveFile,
++                            {primary, PrimZip, Index, FI, ParserFun}),
+                         {{ok, Ebins},
+                          PS#prim_state{primary_archive = ArchiveFile}};
+                     Error ->
+@@ -1093,7 +1197,8 @@ prim_set_primary_archive(PS, ArchiveFile0, ArchiveBin,
+                 end;
+             OldArchiveFile ->
+                 debug(PS, {set_primary_archive, clean}),
+-                {primary, PrimZip, _FI, _ParserFun} = erase(OldArchiveFile),
++                {primary, PrimZip, _Index, _FI, _ParserFun} =
++                    erase(OldArchiveFile),
+                 ok = prim_zip:close(PrimZip),
+                 PS2 = PS#prim_state{primary_archive = undefined},
+                 prim_set_primary_archive(PS2, ArchiveFile, ArchiveBin,
+@@ -1115,18 +1220,18 @@ prim_read_file(PS, File) ->
+                 debug(PS, {archive_read_file, ArchiveFile, FileInArchive}),
+                 FileComponents = path_split(FileInArchive),
+                 Fun =
+-                    fun({Components, _GetInfo, GetBin}, Acc) ->
+-                            if
+-                                Components =:= FileComponents ->
+-                                    {false, {ok, GetBin()}};
+-                                true ->
+-                                    {true, Acc}
++                    fun({Files, _Dirs, _ClientFiles}) ->
++                            case Files of
++                                #{FileComponents := {_GetInfo, GetBin}} ->
++                                    {ok, GetBin()};
++                                #{} ->
++                                    {error, enoent}
+                             end
+                     end,
+-                apply_archive(PS, Fun, {error, enoent}, ArchiveFile)
++                with_archive(PS, ArchiveFile, Fun)
+         end,
+     debug(PS, {return, Res2}),
+-    {Res2, PS2}.    
++    {Res2, PS2}.
+ 
+ -doc false.
+ -spec prim_list_dir(prim_state(), file:filename() | archive()) ->
+@@ -1143,41 +1248,15 @@ prim_list_dir(PS, Dir) ->
+                 debug(PS, {archive_list_dir, ArchiveFile, FileInArchive}),
+                 DirComponents = path_split(FileInArchive),
+                 Fun =
+-                    fun({Components, _GetInfo, _GetBin}, {Status, Names} = Acc) ->
+-                            case Components of
+-                                [RevName | DC] when DC =:= DirComponents ->
+-                                    case RevName of
+-                                        "" ->
+-                                            %% The listed directory
+-                                            {true, {ok, Names}};
+-                                        _ ->
+-                                            %% Plain file
+-                                            Name = reverse(RevName),
+-                                            {true, {Status, [Name | Names]}}
+-                                    end;
+-                                ["", RevName | DC] when DC =:= DirComponents ->
+-                                    %% Directory
+-                                    Name = reverse(RevName),
+-                                    {true, {Status, [Name | Names]}};
+-                                [RevName] when DirComponents =:= [""] ->
+-                                    %% File in top directory
+-                                    Name = reverse(RevName),
+-                                    {true, {ok, [Name | Names]}};
+-                                ["", RevName] when DirComponents =:= [""] ->
+-                                    %% Directory in top directory
+-                                    Name = reverse(RevName),
+-                                    {true, {ok, [Name | Names]}};
+-                                _ ->
+-                                    %% No match
+-                                    {true, Acc}
++                    fun({_Files, Dirs, _ClientFiles}) ->
++                            case Dirs of
++                                #{DirComponents := Names} ->
++                                    {ok, Names};
++                                #{} ->
++                                    {error, enotdir}
+                             end
+                     end,
+-                {{Status, Names}, PS2} =
+-                    apply_archive(PS, Fun, {error, []}, ArchiveFile),
+-                case Status of
+-                    ok    -> {{ok, Names}, PS2};
+-                    error -> {{error, enotdir}, PS2}
+-                end
++                with_archive(PS, ArchiveFile, Fun)
+         end,
+     debug(PS, {return, Res2}),
+     {Res2, PS3}.
+@@ -1207,21 +1286,21 @@ prim_read_file_info(PS, File, FollowLinks) ->
+             {archive, ArchiveFile, FileInArchive} ->
+                 debug(PS, {archive_read_file_info, File}),
+                 FileComponents = path_split(FileInArchive),
++                DirComponents = ["" | FileComponents],
+                 Fun =
+-                    fun({Components, GetInfo, _GetBin}, Acc)  ->
+-			    case Components of
+-				["" | F] when F =:= FileComponents ->
+-                                    %% Directory
+-                                    {false, {ok, GetInfo()}};
+-                                F when F =:= FileComponents ->
++                    fun({Files, _Dirs, _ClientFiles}) ->
++                            case Files of
++                                #{FileComponents := {GetInfo, _GetBin}} ->
+                                     %% Plain file
+-                                    {false, {ok, GetInfo()}};
+-                                _ ->
+-                                    %% No match
+-                                    {true, Acc}
++                                    {ok, GetInfo()};
++                                #{DirComponents := {GetInfo, _GetBin}} ->
++                                    %% Directory
++                                    {ok, GetInfo()};
++                                #{} ->
++                                    {error, enoent}
+                             end
+                     end,
+-                apply_archive(PS, Fun, {error, enoent}, ArchiveFile)
++                with_archive(PS, ArchiveFile, Fun)
+         end,
+     debug(PS2, {return, Res2}),
+     {Res2, PS2}.
+@@ -1242,77 +1321,63 @@ prim_get_cwd(PS, [Drive]) ->
+ 
+ %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+ 
+-apply_archive(PS, Fun, Acc, Archive) ->
++with_archive(PS, Archive, Fun) ->
+     case get(Archive) of
+         undefined ->
+-	    case open_archive(Archive, Acc, Fun) of
+-		{ok, PrimZip, {Acc2, FI, _}} ->
++	    case open_archive(Archive) of
++		{ok, PrimZip, Index, FI} ->
+ 		    debug(PS, {cache, ok}),
+-		    put(Archive, {{ok, PrimZip}, FI}),
+-		    {Acc2, PS};
++		    put(Archive, {{ok, PrimZip, Index}, FI}),
++		    {Fun(Index), PS};
+ 		Error ->
+ 		    debug(PS, {cache, Error}),
+-		    %% put(Archive, {Error, FI}),
+ 		    {Error, PS}
+ 	    end;
+-        {primary, PrimZip, FI, ParserFun} ->
++        {primary, PrimZip, Index, FI, ParserFun} ->
+ 	    case prim_file:read_file_info(Archive) of
+-                {ok, FI2} 
++                {ok, FI2}
+ 		  when FI#file_info.mtime =:= FI2#file_info.mtime ->
+-		    case foldl_archive(PrimZip, Acc, Fun) of
+-			{ok, _PrimZip2, Acc2} ->
+-			    {Acc2, PS};
+-			Error ->
+-			    debug(PS, {primary, Error}),
+-			    {Error, PS}
+-		    end;
++		    {Fun(Index), PS};
+ 		{ok, FI2} ->
+-		    ok = clear_cache(Archive, {ok, PrimZip}),
++		    ok = clear_cache(Archive, {ok, PrimZip, Index}),
+ 		    case load_prim_archive(Archive, FI2, ParserFun) of
+-			{ok, PrimZip2, FI3, _Ebins} ->
++			{ok, PrimZip2, Index2, FI3, _Ebins} ->
+ 			    debug(PS, {cache, {update, Archive}}),
+-			    put(Archive, {primary, PrimZip2, FI3, ParserFun});
++			    put(Archive, {primary, PrimZip2, Index2, FI3,
++                                          ParserFun}),
++                            publish_primary_archive(Archive);
+ 			Error2 ->
+-			    debug(PS, {cache, {clear, Error2}})
++			    debug(PS, {cache, {clear, Error2}}),
++                            publish_primary_archive(undefined)
+ 		    end,
+-		    apply_archive(PS, Fun, Acc, Archive);
++		    with_archive(PS, Archive, Fun);
+ 		Error ->
+ 		    debug(PS, {cache, {clear, Error}}),
+-		    ok = clear_cache(Archive, {ok, PrimZip}),
+-		    apply_archive(PS, Fun, Acc, Archive)
++		    ok = clear_cache(Archive, {ok, PrimZip, Index}),
++		    with_archive(PS, Archive, Fun)
+ 	    end;
+-        {Cache, FI} ->
++        {{ok, _PrimZip, Index} = Cache, FI} ->
+             case prim_file:read_file_info(Archive) of
+-                {ok, FI2} 
++                {ok, FI2}
+ 		  when FI#file_info.mtime =:= FI2#file_info.mtime ->
+-                    case Cache of
+-                        {ok, PrimZip} ->
+-                            case foldl_archive(PrimZip, Acc, Fun) of
+-                                {ok, _PrimZip2, Acc2} ->
+-                                    {Acc2, PS};
+-                                Error ->
+-                                    debug(PS, {cache, {clear, Error}}),
+-                                    ok = clear_cache(Archive, Cache),
+-                                    debug(PS, {cache, Error}),
+-				    erase(Archive),
+-                                    %% put(Archive, {Error, FI}),
+-                                    {Error, PS}
+-                            end;
+-                        Error ->
+-                            debug(PS, {cache, Error}),
+-                            {Error, PS}
+-                    end;
++                    {Fun(Index), PS};
+                 Error ->
+                     debug(PS, {cache, {clear, Error}}),
+                     ok = clear_cache(Archive, Cache),
+-                    apply_archive(PS, Fun, Acc, Archive)
++                    with_archive(PS, Archive, Fun)
+             end
+     end.
+ 
+-open_archive(Archive, Acc, Fun) ->
++open_archive(Archive) ->
+     case prim_file:read_file_info(Archive) of
+ 	{ok, FileInfo} ->
+-	    open_archive(Archive, FileInfo, Acc, Fun);
++            Fun = fun(_, Acc) -> {true, Acc} end,
++	    case open_archive(Archive, FileInfo, [], Fun) of
++                {ok, PrimZip, Index, {[], FI}} ->
++                    {ok, PrimZip, Index, FI};
++                Error ->
++                    Error
++            end;
+ 	{error, Reason} ->
+ 	    {error, Reason}
+     end.
+@@ -1325,10 +1390,11 @@ open_archive(Archive, Acc, Fun) ->
+ %% present. To ensure consistency, a directory element is added if it
+ %% does not already exist (ensure_virtual_dirs/6). NOTE that there will
+ %% be no such directory element for the top directory of the archive.
++%%
+ open_archive(Archive, FileInfo, Acc, Fun) ->
+     FakeFI = FileInfo#file_info{type = directory},
+     Wrapper =
+-	fun({N, GI, GB}, {A, I, Dirs}) ->
++	fun({N, GI, GB, _Location}, {A, I, Dirs}) ->
+ 		Components = path_split(N),
+ 		Dirs2 =
+ 		    case Components of
+@@ -1345,7 +1411,46 @@ open_archive(Archive, FileInfo, Acc, Fun) ->
+ 		{_Continue, A3} = Fun({Components, GI, GB}, A2),
+ 		{true, Includes, {A3, I, Dirs3}}
+ 	end,
+-    prim_zip:open(Wrapper, {Acc, FakeFI, []}, Archive).
++    case prim_zip:open(Wrapper, {Acc, FakeFI, []}, Archive) of
++        {ok, PrimZip, {Acc2, FI, _Dirs}} ->
++            {ok, PrimZip, archive_index(PrimZip), {Acc2, FI}};
++        Error ->
++            Error
++    end.
++
++%% {#{Components => {GetInfo, GetBin}}, #{DirComponents => [Name]},
++%%  #{Components => {FileInfo, Location}}}
++archive_index(PrimZip) ->
++    Fun = fun({Components, GI, GB, Location}, {Files, Dirs, ClientFiles}) ->
++                  {true, {Files#{Components => {GI, GB}},
++                          index_dirs(Components, Dirs),
++                          ClientFiles#{Components => {GI(), Location}}}}
++          end,
++    {ok, _PrimZip, Index} = foldl_archive(PrimZip, {#{}, #{}, #{}}, Fun),
++    Index.
++
++index_dirs(["", RevName | Dir], Dirs) ->
++    Dirs2 = index_name(Dir, RevName, Dirs),
++    Key = [RevName | Dir],
++    case Dirs2 of
++        #{Key := _} -> Dirs2;
++        #{} -> Dirs2#{Key => []}
++    end;
++index_dirs([RevName | Dir], Dirs) ->
++    index_name(Dir, RevName, Dirs).
++
++index_name(Dir0, RevName, Dirs) ->
++    %% path_split/1 returns [""] for the top directory
++    Dir = case Dir0 of
++              [] -> [""];
++              _ -> Dir0
++          end,
++    Name = reverse(RevName),
++    Names = case Dirs of
++                #{Dir := Ns} -> Ns;
++                #{} -> []
++            end,
++    Dirs#{Dir => [Name | Names]}.
+ 
+ ensure_virtual_dirs(Components, Fun, FakeFI, Includes, Dirs, Acc) ->
+     case Components of
+@@ -1377,24 +1482,19 @@ ensure_virtual_dirs(Components, Fun, FakeFI, Includes, Dirs, Acc) ->
+ 
+ foldl_archive(PrimZip, Acc, Fun) ->
+     Wrapper =
+-        fun({Components, GI, GB}, A) ->
++        fun({Components, GI, GB, Location}, A) ->
+                 %% Allow partial iteration at foldl
+-                {Continue, A2} = Fun({Components, GI, GB}, A),
++                {Continue, A2} = Fun({Components, GI, GB, Location}, A),
+                 {Continue, true, A2}
+-        end,                        
++        end,
+     prim_zip:foldl(Wrapper, Acc, PrimZip).
+ 
+ cache_new(PS) ->
+     PS.
+ 
+-clear_cache(Archive, Cache) ->
++clear_cache(Archive, {ok, PrimZip, _Index}) ->
+     erase(Archive),
+-    case Cache of
+-        {ok, PrimZip} ->
+-            prim_zip:close(PrimZip);
+-        {error, _} ->
+-            ok
+-    end.
++    prim_zip:close(PrimZip).
+ 
+ %%% --------------------------------------------------------
+ %%% Misc. functions.
+@@ -1516,15 +1616,40 @@ name_split(undefined, File) ->
+ name_split(ArchiveFile, File0) ->
+     %% Look first in primary archive
+     File = absname(File0),
+-    case string_match(real_path(File), ArchiveFile) of
+-        no_match ->
+-            %% Archive or plain file
+-            name_split(undefined, File);
++    case string_match(File, ArchiveFile) of
+         {match, FileInArchive} ->
+-            %% Primary archive
+-	    {archive, ArchiveFile, FileInArchive}
++            %% No symbolic links to resolve (one system call per component)
++            {archive, ArchiveFile, normalize_path(FileInArchive)};
++        no_match ->
++            case string_match(real_path(File), ArchiveFile) of
++                no_match ->
++                    %% Archive or plain file
++                    name_split(undefined, File);
++                {match, FileInArchive} ->
++                    %% Primary archive
++                    {archive, ArchiveFile, FileInArchive}
++            end
+     end.
+ 
++normalize_path(Path) ->
++    normalize_path(Path, [], []).
++
++normalize_path([$/ | T], Comp, Acc) ->
++    normalize_path(T, [], add_component(reverse(Comp), Acc));
++normalize_path([H | T], Comp, Acc) ->
++    normalize_path(T, [H | Comp], Acc);
++normalize_path([], Comp, Acc) ->
++    join_components(reverse(add_component(reverse(Comp), Acc))).
++
++add_component(".", Acc) -> Acc;
++add_component("..", [_ | Acc]) -> Acc;
++add_component("..", []) -> [];
++add_component(Comp, Acc) -> [Comp | Acc].
++
++join_components([]) -> [];
++join_components([Comp]) -> Comp;
++join_components([Comp | Comps]) -> Comp ++ "/" ++ join_components(Comps).
++
+ string_match([Char | File], [Char | Archive]) ->
+     string_match(File, Archive);
+ string_match([] = File, []) ->
+@@ -1741,14 +1866,19 @@ load_prim_archive(ArchiveFile, ArchiveBin, #file_info{}=FileInfo) ->
+ 		  end
+ 	  end,
+     Ebins0 = [ArchiveFile],
+-    case open_archive({ArchiveFile, ArchiveBin}, FileInfo,
+-		      Ebins0, Fun) of
+-	{ok, PrimZip, {RevEbins, FI, _}} ->
++    Archive = case ArchiveBin of
++                  undefined -> ArchiveFile; % read from the file itself
++                  _ -> {ArchiveFile, ArchiveBin}
++              end,
++    case open_archive(Archive, FileInfo, Ebins0, Fun) of
++	{ok, PrimZip, Index, {RevEbins, FI}} ->
+ 	    Ebins = reverse(RevEbins),
+-	    {ok, PrimZip, FI, Ebins};
++	    {ok, PrimZip, Index, FI, Ebins};
+ 	Error ->
+ 	    Error
+     end;
++load_prim_archive(ArchiveFile, FileInfo, undefined) ->
++    load_prim_archive(ArchiveFile, undefined, FileInfo);
+ load_prim_archive(ArchiveFile, FileInfo, ParserFun) ->
+     case ParserFun(ArchiveFile) of
+ 	{ok, ArchiveBin} ->
+diff --git a/erts/preloaded/src/init.erl b/erts/preloaded/src/init.erl
+index d09a1ed23b..1fdc034dec 100644
+--- a/erts/preloaded/src/init.erl
++++ b/erts/preloaded/src/init.erl
+@@ -164,6 +164,9 @@ The `init` module interprets the following command-line flags:
+   The `-S` flag is only allowed on the command line. If passed through
+   `ERL_*FLAGS` or `-args_file` it will be parsed as a normal command line flag.
+ 
++- **`-primary_archive File`** - Sets the zip archive `File` as the primary
++  archive of `m:erl_prim_loader` before the boot script is read.
++
+ - **`-run Mod [Func [Arg1, Arg2, ...]]`** - Evaluates the specified function
+   call during system initialization. `Func` defaults to `start`. If no arguments
+   are provided, the function is assumed to be of arity 0. Otherwise it is
+@@ -1200,6 +1203,7 @@ do_boot(Init,Flags,Start) ->
+     Path = get_flag_list(path, Flags, false),
+     {Pa,Pz} = PathFls = path_flags(Flags),
+     start_prim_loader(Init, bs2ss(Path), PathFls),
++    set_primary_archive(Flags),
+     BootFile = bootfile(Flags,Root),
+     BootList = get_boot(BootFile,Root),
+     LoadMode = b2a(get_flag(mode, Flags, interactive)),
+@@ -1231,6 +1235,25 @@ get_root(Flags) ->
+ 	    exit(no_or_multiple_root_variables)
+     end.
+ 
++set_primary_archive(Flags) ->
++    case get_argument(primary_archive, Flags) of
++        {ok,[[File0]]} ->
++            File = b2s(File0),
++            {ok,FileInfo} = prim_file:read_file_info(File),
++            case erl_prim_loader:set_primary_archive(File, undefined,
++                                                     FileInfo, undefined) of
++                {ok,_Ebins} ->
++                    ok;
++                {error,Reason} ->
++                    erlang:display({"cannot open primary archive",File,Reason}),
++                    exit(Reason)
++            end;
++        {ok,_} ->
++            exit(multiple_primary_archive_variables);
++        error ->
++            ok
++    end.
++
+ check_bindir(Flags) ->
+     case get_argument(bindir, Flags) of
+ 	{ok,[[_Bindir]]} ->
+diff --git a/erts/preloaded/src/prim_zip.erl b/erts/preloaded/src/prim_zip.erl
+index 6f7691c60e..7985db49a4 100644
+--- a/erts/preloaded/src/prim_zip.erl
++++ b/erts/preloaded/src/prim_zip.erl
+@@ -30,7 +30,8 @@
+ 	 open/1,
+ 	 open/3,
+          foldl/3,
+-	 close/1
++	 close/1,
++	 read_z_file/2
+ 	]).
+ 
+ %% Internal function. Exported to avoid dialyzer warnings
+@@ -50,7 +51,8 @@
+ -record(primzip_file,
+ 	{name,
+ 	 get_info,
+-	 get_bin}).
++	 get_bin,
++	 location}). % {Offset, Size, CompMethod} of the local header and data
+ 
+ -record(primzip,
+ 	{files = [] :: [#primzip_file{}],
+@@ -116,8 +118,9 @@ foldl(_, _, _) ->
+     {error, einval}.
+ 
+ do_foldl(FilterFun, FilterAcc, [PF | Tail], Acc0, PrimZip, PrimZipOrig) ->
+-    #primzip_file{name = F, get_info = GetInfo, get_bin = GetBin} = PF,
+-    try FilterFun({F, GetInfo, GetBin}, FilterAcc) of
++    #primzip_file{name = F, get_info = GetInfo, get_bin = GetBin,
++		  location = Location} = PF,
++    try FilterFun({F, GetInfo, GetBin, Location}, FilterAcc) of
+ 	{Continue, Include, FilterAcc2} ->
+ 	    Acc1 = include_acc(Include, PF, Acc0),
+ 	    case Continue of
+@@ -176,8 +179,19 @@ get_zip_input(_) ->
+ %% get a file from the archive
+ get_z_file(F, Offset, ChunkSize, #primzip{zlib = Z, in = In0, input = Input}) ->
+     case Input({pread, Offset, ChunkSize}, In0) of
+-	{<<?LOCAL_FILE_MAGIC:32/little,
+-	  BLH:(?LOCAL_FILE_HEADER_SZ-4)/binary, _/binary>> = B, _In1} ->
++	{B, _In1} when is_binary(B) ->
++	    get_z_file_bin(F, B, Z);
++	_ ->
++	    throw({bad_local_file_header, F})
++    end.
++
++read_z_file(F, B) ->
++    get_z_file_bin(F, B, undefined).
++
++get_z_file_bin(F, B, Z) ->
++    case B of
++	<<?LOCAL_FILE_MAGIC:32/little,
++	  BLH:(?LOCAL_FILE_HEADER_SZ-4)/binary, _/binary>> ->
+ 	    #local_file_header{gp_flag = GPFlag,
+ 			       file_name_length = FNLen,
+ 			       extra_field_length = EFLen,
+@@ -202,6 +216,13 @@ get_z_file(F, Offset, ChunkSize, #primzip{zlib = Z, in = In0, input = Input}) ->
+ -define(MAX_WBITS, 15).
+ 
+ %% get compressed or stored data
++get_z_all(?DEFLATED, Compressed, undefined, F) ->
++    Z = zlib:open(),
++    try
++	get_z_all(?DEFLATED, Compressed, Z, F)
++    after
++	zlib:close(Z)
++    end;
+ get_z_all(?DEFLATED, Compressed, Z, _F) ->
+     ok = zlib:inflateInit(Z, -?MAX_WBITS),
+     Uncompressed = zlib:inflate(Z, Compressed),
+@@ -249,8 +270,10 @@ get_cd_loop(N, BCD, Acc0, PrimZip, FileName, Offset, CFH, EndOffset, FilterFun,
+     %% erlang:display({FileName, N, Offset, Size, NextPF}),
+     GetInfo = fun() -> cd_file_header_to_file_info(FileName, CFH, <<>>) end,
+     GetBin = fun() -> get_z_file(FileName, Offset, Size, PrimZip) end,
+-    PF = #primzip_file{name = FileName, get_info = GetInfo, get_bin = GetBin},
+-    try FilterFun({FileName, GetInfo, GetBin}, FilterAcc) of
++    Location = {Offset, Size, CFH#cd_file_header.comp_method},
++    PF = #primzip_file{name = FileName, get_info = GetInfo, get_bin = GetBin,
++		       location = Location},
++    try FilterFun({FileName, GetInfo, GetBin, Location}, FilterAcc) of
+ 	{Continue, Include, FilterAcc2} ->
+ 	    Acc1 =
+ 		case Include of

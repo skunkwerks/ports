@@ -1,0 +1,7 @@
+{
+  "schema": 1,
+  "nifs": [
+    {"c": "greet.c", "init": "greet_nif_init"}
+  ],
+  "link_args": []
+}
