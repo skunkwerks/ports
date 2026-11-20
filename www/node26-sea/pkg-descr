@@ -1,0 +1,12 @@
+A Node.js interpreter that builds single executable applications
+(node --build-sea) without LIEF, and so without its mbedtls dependency.
+
+Upstream rewrites the whole executable with LIEF to add the application blob.
+This port instead reserves spare program header slots when linking node and
+appends the blob in place, which keeps the program header table in the first
+page where FreeBSD's image activator requires it, and leaves every existing
+ELF note untouched.
+
+It installs a single interpreter, bin/node26-sea, and nothing else: it is a
+build tool for producing single executable applications rather than a
+replacement for www/node26, and the two can be installed side by side.
