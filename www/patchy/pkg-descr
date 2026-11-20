@@ -1,0 +1,11 @@
+Patchy is code review for arc, Phabricator's command line tool, as a
+rewrite of Phorge's Differential in Elixir and Phoenix LiveView. It
+keeps the Conduit API, so arc diff, arc patch, arc list and arc land
+work against it unchanged, and the review pages: the revision page with
+side by side and unified diffs, inline comments with drafts, review
+actions, stacked revisions, a history, and the revision list grouped by
+what each reviewer has to do next. Repository hosting, Herald, mail and
+the rest of Phorge are left out.
+
+It runs as one service on PostgreSQL. A post-receive hook closes
+revisions when their commits land.

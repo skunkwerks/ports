@@ -1,0 +1,2 @@
+@sample %%ETCDIR%%/patchy.env.sample
+@dir(www,www,750) /var/db/patchy

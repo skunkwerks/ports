@@ -1,0 +1,95 @@
+#!/bin/sh
+#
+# PROVIDE: patchy
+# REQUIRE: DAEMON NETWORKING
+# KEYWORD: shutdown
+#
+# Add the following lines to /etc/rc.conf.local or /etc/rc.conf to enable
+# patchy:
+#
+# patchy_enable (bool):   Set to "NO" by default. Set it to "YES" to enable.
+# patchy_user (user):     Set to "www" by default. The user to run as.
+# patchy_group (group):   Set to "www" by default.
+# patchy_env (path):      Set to "%%ETCDIR%%/patchy.env" by default. A sh
+#                         file exporting DATABASE_URL, SECRET_KEY_BASE,
+#                         PHX_HOST and PORT, see patchy.env.sample there.
+# patchy_home (path):     Set to "/var/db/patchy" by default. A directory
+#                         the service may write to.
+# patchy_syslog_facility (str): Set to "daemon" by default.
+#
+# "service patchy migrate" runs the pending database migrations.
+
+. /etc/rc.subr
+
+name=patchy
+rcvar=patchy_enable
+desc="Code review for arc"
+
+load_rc_config $name
+
+: ${patchy_enable:="NO"}
+: ${patchy_user:="www"}
+: ${patchy_group:="www"}
+: ${patchy_env:="%%ETCDIR%%/patchy.env"}
+: ${patchy_home:="/var/db/patchy"}
+: ${patchy_syslog_facility:="daemon"}
+
+patchy_dir="%%RELEASE%%"
+pidfile="/var/run/${name}.pid"
+daemon_pidfile="/var/run/${name}-daemon.pid"
+
+# the release scripts exec each other down to the VM, so the pid daemon(8)
+# records is the VM's, which runs from lang/erlang-runtime29
+procname=$(echo %%ERLANG%%/erts-*/bin/beam.smp)
+
+# everything the service needs in its environment, then the release
+patchy_cmd=". ${patchy_env} && \
+	export PATH=%%ERLANG%%/bin:${PATH} \
+	HOME=${patchy_home} RELEASE_TMP=${patchy_home} \
+	ERL_CRASH_DUMP=${patchy_home}/erl_crash.dump && \
+	exec ${patchy_dir}/bin/server"
+
+command="/usr/sbin/daemon"
+command_args="-S -R 5 -r -T ${name} -s ${patchy_syslog_facility} \
+	-p ${pidfile} -P ${daemon_pidfile} -u ${patchy_user} \
+	/bin/sh -c '${patchy_cmd}'"
+
+extra_commands="migrate"
+migrate_cmd="patchy_migrate"
+start_precmd="patchy_precmd"
+migrate_precmd="patchy_precmd"
+stop_postcmd="patchy_stoppostcmd"
+
+patchy_precmd()
+{
+	if [ ! -r "${patchy_env}" ]; then
+		err 1 "${patchy_env} is missing. Copy patchy.env.sample there and fill it in."
+	fi
+	if [ ! -d "${patchy_home}" ]; then
+		install -d -o ${patchy_user} -g ${patchy_group} -m 750 "${patchy_home}"
+	fi
+	for f in ${pidfile} ${daemon_pidfile}; do
+		if [ ! -e "${f}" ]; then
+			install -o ${patchy_user} -g ${patchy_group} /dev/null "${f}"
+		fi
+	done
+}
+
+patchy_migrate()
+{
+	echo "Running ${name} migrations."
+	su -m ${patchy_user} -c "/bin/sh -c '. ${patchy_env} && \
+		export PATH=%%ERLANG%%/bin:${PATH} \
+		HOME=${patchy_home} RELEASE_TMP=${patchy_home} && \
+		exec ${patchy_dir}/bin/migrate'"
+}
+
+patchy_stoppostcmd()
+{
+	# daemon(8) restarts the VM when it stops, so stop the supervisor too
+	if [ -f "${daemon_pidfile}" ]; then
+		pids=$(pgrep -F ${daemon_pidfile} 2>/dev/null) && kill ${pids}
+	fi
+}
+
+run_rc_command "$1"
