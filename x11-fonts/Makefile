@@ -185,6 +185,7 @@
     SUBDIR += liberation-fonts-ttf
     SUBDIR += libertinus
     SUBDIR += libfontenc
+    SUBDIR += literata
     SUBDIR += linden-hill
     SUBDIR += linux-c7-fontconfig
     SUBDIR += linux-rl9-fontconfig
