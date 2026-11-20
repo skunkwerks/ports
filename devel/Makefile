@@ -239,6 +239,7 @@
     SUBDIR += argp-standalone
     SUBDIR += argparse
     SUBDIR += args
+    SUBDIR += args-cli
     SUBDIR += argtable
     SUBDIR += argtable3
     SUBDIR += arm-elf-binutils

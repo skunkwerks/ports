@@ -1,0 +1,5 @@
+args is a command-line client that signs you in to args from your
+terminal so git push to args repositories just works. The binary is named
+`args`; it authenticates via the OAuth device-code flow, stores credentials
+through your existing git credential helper, and reports the current
+login state.
