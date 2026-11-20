@@ -19,7 +19,7 @@ os.environ.setdefault("HERMES_OPTIONAL_SKILLS", "%%DATADIR%%/optional-skills")
 # may not install (lazy installs are off); use the system node, as Nix does.
 os.environ.setdefault("HERMES_NODE", "%%LOCALBASE%%/bin/node")
 
-from %%ENTRY_MODULE%% import %%ENTRY_FUNC%% as _entry
+from %%ENTRY_MODULE%% import main as _entry
 
 if __name__ == "__main__":
     sys.exit(_entry())
