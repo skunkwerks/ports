@@ -1,0 +1,11 @@
+TIMESTAMP = 1795167450
+SHA256 (casa/casa-ui-0.0.27.0.tar.xz) = 002d4013c60241aa7ab6ec7162fe625be1a6557a8f56f024f1c67521b6f58af8
+SIZE (casa/casa-ui-0.0.27.0.tar.xz) = 226500
+SHA256 (casa/hex-2.5.3-otp-29.ez) = ac97fb0957a1f1bb4d26ed57cb5fa8d10767a4da8d2383f27ebf63890e2a0e57
+SIZE (casa/hex-2.5.3-otp-29.ez) = 1240722
+SHA256 (casa/casa-ui-deps-0.0.27.0.tar.xz) = 4d4657851f44583045c9a9b4eed609656ce9e1a041ccd23f453f27990f3d297d
+SIZE (casa/casa-ui-deps-0.0.27.0.tar.xz) = 1831488
+SHA256 (casa/fluxon-3.4.0.tar.xz) = 5bbfb300b9e28a810033fd647a3ac595535c99b3a760e96df3cdd6685177e688
+SIZE (casa/fluxon-3.4.0.tar.xz) = 309940
+SHA256 (casa/casa-ui-assets-0.0.27.0.tar.xz) = 586024bdd8a8aad6522934243694dd7fd555d124f899c0e5b23ddfa2ba5777ad
+SIZE (casa/casa-ui-assets-0.0.27.0.tar.xz) = 139372

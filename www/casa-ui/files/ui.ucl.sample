@@ -1,0 +1,19 @@
+# casa-ui's config, read from CASA_UI_CONFIG. The rc script sets that to
+# ui.ucl in this directory.
+ui {
+  # the UI keeps nothing between runs, the rc script makes this
+  state_dir      = "/var/run/casa-ui"
+  # the operator key from casa key gen --operator ui, with ui.crt beside
+  # it, enrolled with casa operator add ui
+  key            = "/usr/local/etc/casa/ui/ui.key"
+  # the address the pages are served on, over HTTP, for the reverse proxy
+  listen         = "[::1]:4000"
+  # the CouchDB from databases/couchdb3, with the admin's credentials
+  couchdb        = "http://admin:passwd@[::1]:5984"
+  # how many days of runs and facts to keep in CouchDB
+  retention_days = 90
+  # each control node, with the certificate it is pinned by
+  controls = [
+    { addr = "[fd00:ca5a:0:1::10]:51802", crt = "/usr/local/etc/casa/ui/casa10.crt" },
+  ]
+}

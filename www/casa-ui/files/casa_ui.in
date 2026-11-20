@@ -1,0 +1,92 @@
+#!/bin/sh
+#
+# PROVIDE: casa_ui
+# REQUIRE: DAEMON NETWORKING couchdb3
+# KEYWORD: shutdown
+#
+# Add the following lines to /etc/rc.conf.local or /etc/rc.conf to enable
+# casa_ui:
+#
+# casa_ui_enable (bool):	Set to "NO" by default. Set it to "YES" to
+#				enable.
+# casa_ui_user (user):	Set to "www" by default. The user to run as.
+# casa_ui_group (group):	Set to "www" by default.
+# casa_ui_config (path):	Set to "%%ETCDIR%%/ui.ucl" by default.
+# casa_ui_env (str):	Unset by default. Environment for the UI, as
+#				KEY=VALUE pairs, such as
+#				"PHX_HOST=casa.example.org", the host name
+#				the reverse proxy serves.
+# casa_ui_syslog_facility (str): Set to "daemon" by default.
+
+. /etc/rc.subr
+
+name=casa_ui
+rcvar=casa_ui_enable
+desc="Web UI for the casa cluster"
+
+load_rc_config $name
+
+: ${casa_ui_enable:="NO"}
+: ${casa_ui_user:="www"}
+: ${casa_ui_group:="www"}
+: ${casa_ui_config:="%%ETCDIR%%/ui.ucl"}
+: ${casa_ui_syslog_facility:="daemon"}
+
+# rc.subr would run the command through su for a set casa_ui_user, which
+# breaks the quoting of the sh -c below. daemon(8) drops to the user
+# itself, with -u, so keep the user here and hide it from rc.subr.
+# casa_ui_env stays rc.subr's own: it runs daemon(8) through env(1)
+# with those variables, and the release sees them.
+casa_ui_runas="${casa_ui_user}"
+casa_ui_rungroup="${casa_ui_group}"
+unset casa_ui_user casa_ui_group
+
+# The UI keeps nothing between runs. Its run directory holds the
+# release's temporary files and a crash dump, and is made on each start.
+casa_ui_rundir="/var/run/casa-ui"
+pidfile="/var/run/${name}.pid"
+daemon_pidfile="/var/run/${name}-daemon.pid"
+
+# the release scripts exec each other down to the VM, so the pid daemon(8)
+# records is the VM's, from the ERTS inside the release
+procname=$(echo %%RELEASE%%/erts-*/bin/beam.smp)
+
+casa_ui_cmd="export LANG=C.UTF-8 PHX_SERVER=true \
+	CASA_UI_CONFIG=${casa_ui_config} \
+	HOME=${casa_ui_rundir} RELEASE_TMP=${casa_ui_rundir} \
+	ERL_CRASH_DUMP=${casa_ui_rundir}/erl_crash.dump && \
+	exec %%RELEASE%%/bin/casa_ui start"
+
+command="/usr/sbin/daemon"
+command_args="-S -R 5 -r -T ${name} -l ${casa_ui_syslog_facility} \
+	-p ${pidfile} -P ${daemon_pidfile} -u ${casa_ui_runas} \
+	/bin/sh -c '${casa_ui_cmd}'"
+
+start_precmd="casa_ui_precmd"
+stop_postcmd="casa_ui_stoppostcmd"
+
+casa_ui_precmd()
+{
+	if [ ! -r "${casa_ui_config}" ]; then
+		err 1 "${casa_ui_config} is missing. Copy ui.ucl.sample there and fill it in."
+	fi
+	install -d -o ${casa_ui_runas} -g ${casa_ui_rungroup} -m 700 \
+		"${casa_ui_rundir}"
+	for f in ${pidfile} ${daemon_pidfile}; do
+		if [ ! -e "${f}" ]; then
+			install -o ${casa_ui_runas} -g ${casa_ui_rungroup} \
+				/dev/null "${f}"
+		fi
+	done
+}
+
+casa_ui_stoppostcmd()
+{
+	# daemon(8) restarts the VM when it stops, so stop the supervisor too
+	if [ -f "${daemon_pidfile}" ]; then
+		pids=$(pgrep -F ${daemon_pidfile} 2>/dev/null) && kill ${pids}
+	fi
+	rm -rf "${casa_ui_rundir}"
+}
+
+run_rc_command "$1"

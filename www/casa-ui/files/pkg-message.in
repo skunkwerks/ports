@@ -1,0 +1,50 @@
+[
+{ type: install
+  message: <<EOM
+casa-ui runs from %%RELEASE%% behind a reverse proxy, as the
+www user by default. It needs the CouchDB from databases/couchdb3
+running with an admin, and an operator key enrolled on the casa
+cluster.
+
+To set it up:
+
+ 1. Give it a config, a key and the control nodes' certificates, in one
+    of two ways.
+
+    To share the files casa-ui uses from a casa checkout, in your own
+    ~/.config/casa/, run the daemon as yourself and point it there:
+
+      sysrc casa_ui_user=you casa_ui_group=you
+      sysrc casa_ui_config=/home/you/.config/casa/ui.ucl
+
+    The daemon and mix phx.server then use the same key and CouchDB
+    login, and listen on the same address, so run one at a time.
+    Restart the daemon after mix casa.couchdb.reset, which writes a new
+    password into ui.ucl.
+
+    To keep it apart as the www user, make it a key and enrol it from a
+    host that may run casa operator commands:
+
+      casa key gen --operator ui
+      casa operator add ui ~/.config/casa/operator.crt
+
+    Put the key and certificate in %%ETCDIR%%/ui/ as ui.key and
+    ui.crt, with each control node's certificate, owned by www and
+    readable by www only. Then copy %%ETCDIR%%/ui.ucl.sample to
+    %%ETCDIR%%/ui.ucl and set the CouchDB URL, the listen address
+    and the control nodes in it.
+
+ 2. Set PHX_HOST, the host name the proxy serves, in casa_ui_env.
+    The proxy must pass X-Forwarded-Proto.
+
+      sysrc casa_ui_env="PHX_HOST=casa.example.org"
+
+ 3. Enable the services and start them:
+
+      service couchdb3 enable
+      service couchdb3 start
+      service casa_ui enable
+      service casa_ui start
+EOM
+}
+]

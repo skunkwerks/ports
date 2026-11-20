@@ -103,6 +103,7 @@
     SUBDIR += caldavzap
     SUBDIR += carbonapi
     SUBDIR += cas
+    SUBDIR += casa-ui
     SUBDIR += castget
     SUBDIR += cef
     SUBDIR += cgi-lib

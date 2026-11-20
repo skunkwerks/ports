@@ -1,0 +1,6 @@
+casa-ui is the optional web UI of casa, a configuration management
+daemon with Lua policy and a raft control plane. It logs in to the
+control nodes as an operator over mTLS, follows the report log and keeps
+each run and each fact set in CouchDB. Its LiveView pages show the
+fleet, the facts and classes of each host, and every run with its
+promises and the policy source they came from.
