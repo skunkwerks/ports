@@ -2189,6 +2189,7 @@
     SUBDIR += senna
     SUBDIR += sentencepiece
     SUBDIR += sexp
+    SUBDIR += sghtmltopdf
     SUBDIR += sgmlformat
     SUBDIR += sgmls
     SUBDIR += sgrep2
