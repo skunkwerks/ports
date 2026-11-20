@@ -1,5 +1,6 @@
 PORTNAME=	libucl
 DISTVERSION=	0.10.0
+PORTREVISION=	1
 CATEGORIES=	textproc devel
 
 # implicit-approval+: bapt dvl
@@ -16,6 +17,7 @@ GH_ACCOUNT=	vstakhov
 USE_LDCONFIG=	yes
 
 GNU_CONFIGURE=	yes
+CONFIGURE_ARGS=	--with-pic
 
 INSTALL_TARGET=	install-strip
 TEST_TARGET=	check
