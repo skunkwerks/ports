@@ -1,0 +1,10 @@
+--- Cargo.toml.orig	2026-10-11 08:15:19 UTC
++++ Cargo.toml
+@@ -1,6 +1,6 @@ name = "rtk"
+ [package]
+ name = "rtk"
+-version = "0.49.0"
++version = "0.51.1-rc.522"
+ edition = "2024"
+ rust-version = "1.91"
+ authors = ["Patrick Szymkowiak"]
