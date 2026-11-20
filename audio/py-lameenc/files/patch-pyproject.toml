@@ -1,0 +1,19 @@
+--- pyproject.toml.orig	2026-11-08 15:16:04 UTC
++++ pyproject.toml
+@@ -1,5 +1,5 @@
+ [build-system]
+-requires = ["setuptools>=77.0.0", "wheel", "setuptools-scm"]
++requires = ["setuptools", "wheel", "setuptools-scm"]
+ build-backend = "setuptools.build_meta"
+ 
+ [project]
+@@ -10,8 +10,7 @@ authors = [
+ authors = [
+   {name = "Chris Staite", email = "chris@yourdreamnet.co.uk"},
+ ]
+-license = "LGPL-3.0-or-later"
+-license-files = ["LICENSE"]
++license = {text = "LGPL-3.0-or-later"}
+ classifiers = [
+     "Topic :: Multimedia :: Sound/Audio :: Conversion",
+     "Programming Language :: Python :: 3 :: Only",

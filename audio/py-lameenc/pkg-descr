@@ -1,0 +1,2 @@
+lameenc is a small Python 3 extension that encodes PCM audio to MP3
+using the LAME library, without calling an external binary.
